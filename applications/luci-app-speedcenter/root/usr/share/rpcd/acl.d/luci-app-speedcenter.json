@@ -1,0 +1,17 @@
+{
+  "luci-app-speedcenter": {
+    "description": "Grant access to SpeedCenter measurements and configuration",
+    "read": {
+      "ubus": {
+        "speedcenter": [ "status", "result", "history", "ping", "config" ]
+      },
+      "uci": [ "speedcenter" ]
+    },
+    "write": {
+      "ubus": {
+        "speedcenter": [ "start", "stop", "ping_start", "save" ]
+      },
+      "uci": [ "speedcenter" ]
+    }
+  }
+}

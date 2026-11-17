@@ -1,0 +1,11 @@
+# Optional standalone WebUI. Add this section to /etc/config/uhttpd.
+# Requires the uhttpd-mod-ubus package. Bind to LAN only.
+
+config uhttpd speedcenter
+        option listen_http '192.168.1.1:8989'
+        option home '/www/speedcenter'
+        option ubus_prefix '/ubus'
+        option ubus_socket '/var/run/ubus.sock'
+        option ubus_cors '0'
+        option no_dirlists '1'
+        option no_symlinks '1'

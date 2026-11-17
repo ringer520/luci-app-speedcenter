@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpeedCenter · 网络测速与全球延迟观测中心</title>
+<link rel="stylesheet" href="/luci-static/resources/speedcenter/style.css">
+<style>
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #0b0f19; }
+  .sc-login {
+    position: fixed; inset: 0;
+    background:
+      radial-gradient(45% 45% at 20% 25%, rgba(99, 102, 241, 0.28), transparent 70%),
+      radial-gradient(40% 40% at 80% 75%, rgba(6, 182, 212, 0.24), transparent 70%),
+      linear-gradient(145deg, #090d16 0%, #111827 50%, #0b1325 100%);
+    display: grid; place-items: center; z-index: 100;
+  }
+  .sc-login form {
+    width: 380px; max-width: calc(100vw - 32px);
+    padding: 32px 28px;
+    background: rgba(17, 24, 39, 0.78);
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 22px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    color: #f8fafc;
+  }
+  .sc-login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+  .sc-login-logo {
+    width: 42px; height: 42px; border-radius: 12px;
+    background: linear-gradient(135deg, #4f46e5, #06b6d4);
+    display: grid; place-items: center; font-weight: 800; font-size: 15px; color: #fff;
+    box-shadow: 0 8px 20px rgba(79, 70, 229, 0.4);
+  }
+  .sc-login h2 { margin: 0; font-size: 20px; font-weight: 800; color: #f8fafc; letter-spacing: -0.02em; }
+  .sc-login p { color: #94a3b8; font-size: 13px; margin: 0 0 20px; line-height: 1.5; }
+  .sc-login input {
+    width: 100%; box-sizing: border-box; margin: 8px 0; padding: 11px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06); color: #f8fafc; font-size: 13.5px; outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .sc-login input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.22); }
+  .sc-login button { width: 100%; margin-top: 14px; padding: 11px 18px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="login" class="sc-login">
+  <form id="login-form">
+    <div class="sc-login-brand">
+      <div class="sc-login-logo">SC</div>
+      <h2>SpeedCenter 登录</h2>
+    </div>
+    <p>使用路由器管理账号登录，会话仅保存在当前浏览器标签页。</p>
+    <input id="user" type="text" value="root" autocomplete="username" placeholder="用户名">
+    <input id="pass" type="password" autocomplete="current-password" placeholder="管理密码">
+    <button class="sc-btn primary" type="submit">登录控制台</button>
+  </form>
+</div>
+<div id="app"></div>
+<script src="/luci-static/resources/speedcenter/app.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var session = sessionStorage.getItem('sc-session') || '';
+  var id = 1;
+
+  function ubus(object, method, params) {
+    if (!session) return Promise.reject(new Error('not logged in'));
+    return fetch('/ubus', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: id++, method: 'call',
+        params: [ session, object, method, params || {} ]
+      })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (res.error) throw new Error(res.error.message || 'ubus error');
+      return res.result && res.result[1];
+    });
+  }
+
+  function mapConfig(c) {
+    c = c || {};
+    return {
+      engine: c.engine || 'ookla',
+      region: c.region || 'both',
+      serverSource: c.server_source || 'auto',
+      cnServerList: c.cn_server_list || '',
+      globalServerList: c.global_server_list || '',
+      retention: c.retention || 30,
+      schedule: c.schedule || 'off',
+      theme: c.theme || 'auto',
+      baselineMbps: Number(c.baseline_mbps) || 0,
+      targets: (c.targets || []).map(function (t) {
+        return [ t.region, t.name, t.host, t.ip, t.mode ].join(',');
+      }).join('\n')
+    };
+  }
+
+  function startApp() {
+    if (!window.SpeedCenterUI || !window.SpeedCenterUI.createApp) {
+      document.getElementById('login').innerHTML =
+        '<h2>资源加载失败</h2><p>未找到界面脚本 /luci-static/resources/speedcenter/app.js，' +
+        '请确认已安装 luci-app-speedcenter 包，或检查 Web 服务器目录。</p>';
+      return;
+    }
+    document.getElementById('login').style.display = 'none';
+    var adapter = {
+      getConfig: function () { return ubus('speedcenter', 'config').then(mapConfig); },
+      saveConfig: function (cfg) {
+        return ubus('speedcenter', 'save', {
+          engine: cfg.engine, region: cfg.region || 'both',
+          server_source: cfg.serverSource || 'auto',
+          cn_server_list: cfg.cnServerList || '',
+          global_server_list: cfg.globalServerList || '',
+          retention: Number(cfg.retention) || 30,
+          schedule: cfg.schedule || 'off',
+          theme: cfg.theme || 'auto',
+          baseline_mbps: Number(cfg.baselineMbps) || 0,
+          targets: cfg.targets || ''
+        });
+      },
+      getStatus: function () {
+        return ubus('speedcenter', 'status').then(function (st) {
+          st = st || {};
+          return {
+            running: !!st.running, progress: st.progress || 0,
+            phase: st.phase || '', last_error: st.last_error || '',
+            live: st.live || {}, lastResult: st.lastResult || null
+          };
+        });
+      },
+      getResult: function () { return ubus('speedcenter', 'result'); },
+      getHistory: function () { return ubus('speedcenter', 'history', { limit: 300 }).then(function (r) { return r.entries || []; }); },
+      getPing: function () { return ubus('speedcenter', 'ping'); },
+      startSpeed: function (o) { return ubus('speedcenter', 'start', { engine: o.engine, region: o.region, server_source: o.serverSource || 'auto' }); },
+      stopSpeed: function () { return ubus('speedcenter', 'stop'); },
+      startPing: function (region) { return ubus('speedcenter', 'ping_start', { region: region }); }
+    };
+    window.SpeedCenterUI.createApp(document.getElementById('app'), adapter);
+  }
+
+  document.getElementById('login-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var user = document.getElementById('user').value;
+    var pass = document.getElementById('pass').value;
+    fetch('/ubus', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: id++, method: 'call',
+        params: [ '00000000000000000000000000000000', 'session', 'login',
+          { username: user, password: pass, timeout: 3600 } ]
+      })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (res.error) throw new Error(res.error.message || 'login failed');
+      session = res.result[1].ubus_rpc_session;
+      sessionStorage.setItem('sc-session', session);
+      startApp();
+    }).catch(function (err) { alert('登录失败: ' + err.message); });
+  });
+
+  if (session) startApp();
+})();
+</script>
+</body>
+</html>

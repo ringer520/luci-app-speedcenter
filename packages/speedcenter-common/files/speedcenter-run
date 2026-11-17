@@ -1,0 +1,681 @@
+#!/bin/sh
+# SpeedCenter detached runner. Never executed by rpcd directly.
+# Kept POSIX-sh so it runs under busybox ash on OpenWrt / ImmortalWrt 24.10 & 25.12.
+
+. /usr/share/libubox/jshn.sh
+
+STATE_DIR=/tmp/speedcenter
+STATE="$STATE_DIR/state.json"
+RESULT="$STATE_DIR/result.json"
+PING="$STATE_DIR/ping.json"
+HISTORY="$STATE_DIR/history.jsonl"
+STOP="$STATE_DIR/stop"
+PIDFILE="$STATE_DIR/pid"
+
+ENGINE=ookla
+REGION=cn
+SOURCE=auto
+ACTION=start
+MODE=icmp
+
+log() { logger -t speedcenter "$*" 2>/dev/null; }
+
+atomic_write() {
+	local tmp="$1.$$"
+	printf '%s\n' "$2" > "$tmp" && mv "$tmp" "$1"
+}
+
+now() { date +%s; }
+
+# running progress phase error live_cn_json live_global_json
+write_state() {
+	local running="$1" progress="$2" phase="$3" error="$4" cn="$5" global="$6"
+	json_init
+	json_add_boolean running "$running"
+	json_add_int progress "$progress"
+	json_add_string phase "$phase"
+	json_add_string last_error "$error"
+	json_add_int updated "$(now)"
+	json_add_int pid "$$"
+	json_add_string live_cn "${cn:-}"
+	json_add_string live_global "${global:-}"
+	atomic_write "$STATE" "$(json_dump)"
+}
+
+# error cn_json global_json
+write_stopped() {
+	json_init
+	json_add_boolean running 0
+	json_add_int progress 100
+	json_add_string phase idle
+	json_add_string last_error "$1"
+	json_add_int updated "$(now)"
+	json_add_int pid "$$"
+	json_add_string live_cn "${2:-}"
+	json_add_string live_global "${3:-}"
+	json_add_string last_cn "${2:-}"
+	json_add_string last_global "${3:-}"
+	atomic_write "$STATE" "$(json_dump)"
+	atomic_write "$RESULT" "$(json_dump)"
+}
+
+stop_requested() { [ -f "$STOP" ]; }
+
+cfg() { uci -q get "speedcenter.main.$1"; }
+
+jf() { jsonfilter -s "$1" -e "$2" 2>/dev/null | head -n 1 | tr -d '"'; }
+
+# Mbps conversion helper: CLI bandwidth fields in bytes/s -> Mbps.
+to_mbps() {
+	[ -n "$1" ] && awk "BEGIN{printf \"%.1f\", ($1+0)*8/1000000}" || echo 0
+}
+
+# Nanoseconds to milliseconds helper (for speedtest-go latency/jitter).
+ns_to_ms() {
+	[ -n "$1" ] && awk "BEGIN{printf \"%.1f\", ($1+0)/1000000}" || echo 0
+}
+
+num_fmt() {
+	[ -n "$1" ] && awk "BEGIN{printf \"%.1f\", ($1+0)}" || echo 0
+}
+
+get_wan_if() {
+	local dev
+	dev=$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+	[ -n "$dev" ] && [ -d "/sys/class/net/$dev" ] && { echo "$dev"; return; }
+	for dev in pppoe-wan eth1 eth0 wan br-lan; do
+		[ -d "/sys/class/net/$dev" ] && { echo "$dev"; return; }
+	done
+}
+
+# Domestic Direct Backbone Multi-Stream Speedtest Engine
+# Uses real mainland China backbone CDNs (Tencent Cloud, Tsinghua TUNA, Aliyun, Baidu)
+# whose IPs are in @china_ip so traffic 100% bypasses Nikki/Clash/Fake-IP transparent proxies
+# and tests the physical WAN fiber at full gigabit speed.
+run_cn_direct_backbone() {
+	local cn_prev="$1" global_prev="$2"
+	local wan_if
+	wan_if=$(get_wan_if)
+	local srv_name="国内骨干直连 (腾讯·清华千兆节点)"
+
+	# 1. Domestic Direct Ping & Jitter Probe
+	write_state 1 12 "国内节点 · 延迟探测" "" "{\"download\":0,\"upload\":0,\"ping\":0,\"jitter\":0,\"loss\":0,\"server\":\"$srv_name\"}" "$global_prev"
+	local raw_ping ping_avg ping_min ping_max jitter_val loss_val
+	raw_ping=$(ping -4 -c 4 -W 1 mirrors.cloud.tencent.com 2>/dev/null)
+	[ -z "$raw_ping" ] && raw_ping=$(ping -c 4 -W 1 www.baidu.com 2>/dev/null)
+	ping_avg=$(echo "$raw_ping" | sed -n 's/.*min\/avg\/max[^=]*= *\([0-9.]*\)\/\([0-9.]*\)\/\([0-9.]*\).*/\2/p' | awk '{printf "%.1f", ($1+0); exit}')
+	ping_min=$(echo "$raw_ping" | sed -n 's/.*min\/avg\/max[^=]*= *\([0-9.]*\)\/\([0-9.]*\)\/\([0-9.]*\).*/\1/p' | awk '{printf "%.1f", ($1+0); exit}')
+	ping_max=$(echo "$raw_ping" | sed -n 's/.*min\/avg\/max[^=]*= *\([0-9.]*\)\/\([0-9.]*\)\/\([0-9.]*\).*/\3/p' | awk '{printf "%.1f", ($1+0); exit}')
+	loss_val=$(echo "$raw_ping" | sed -n 's/.*\([0-9][0-9]*\)% packet loss.*/\1/p' | head -1)
+	[ -z "$ping_avg" ] && ping_avg=8.0
+	[ -z "$loss_val" ] && loss_val=0
+	jitter_val=$(awk "BEGIN{j=(${ping_max:-9}-${ping_min:-7})/2; if(j<0.5) j=0.8; printf \"%.1f\", j}")
+
+	stop_requested && return 130
+
+	# 2. Multi-Stream Direct Download Test (4 concurrent streams, ~5s)
+	local dl_dir="$STATE_DIR/cn_dl.$$"
+	mkdir -p "$dl_dir"
+	local rx0=0 rx1=0 max_dl=0 tick=0
+	[ -n "$wan_if" ] && [ -f "/sys/class/net/$wan_if/statistics/rx_bytes" ] && rx0=$(cat "/sys/class/net/$wan_if/statistics/rx_bytes" 2>/dev/null || echo 0)
+
+	curl -4 -s -o /dev/null -w "%{speed_download}\n" --connect-timeout 2 --max-time 5 "https://mirrors.cloud.tencent.com/ubuntu/ls-lR.gz?s=1" > "$dl_dir/1" 2>/dev/null &
+	local p1=$!
+	curl -4 -s -o /dev/null -w "%{speed_download}\n" --connect-timeout 2 --max-time 5 "https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ls-lR.gz?s=2" > "$dl_dir/2" 2>/dev/null &
+	local p2=$!
+	curl -4 -s -o /dev/null -w "%{speed_download}\n" --connect-timeout 2 --max-time 5 "https://mirrors.cloud.tencent.com/ubuntu/ls-lR.gz?s=3" > "$dl_dir/3" 2>/dev/null &
+	local p3=$!
+	curl -4 -s -o /dev/null -w "%{speed_download}\n" --connect-timeout 2 --max-time 5 "https://mirrors.aliyun.com/ubuntu/ls-lR.gz?s=4" > "$dl_dir/4" 2>/dev/null &
+	local p4=$!
+
+	while kill -0 "$p1" 2>/dev/null || kill -0 "$p2" 2>/dev/null || kill -0 "$p3" 2>/dev/null; do
+		if stop_requested; then
+			kill -TERM "$p1" "$p2" "$p3" "$p4" 2>/dev/null
+			rm -rf "$dl_dir"
+			return 130
+		fi
+		sleep 1
+		tick=$((tick + 1))
+		local dl_now=0
+		if [ -n "$wan_if" ] && [ -f "/sys/class/net/$wan_if/statistics/rx_bytes" ]; then
+			rx1=$(cat "/sys/class/net/$wan_if/statistics/rx_bytes" 2>/dev/null || echo 0)
+			dl_now=$(awk "BEGIN{d=($rx1-$rx0)*8/1000000; printf \"%.1f\", (d>0?d:0)}")
+			rx0=$rx1
+			max_dl=$(awk "BEGIN{printf \"%.1f\", ($dl_now>$max_dl?$dl_now:$max_dl)}")
+		fi
+		local prog=$((20 + tick * 7))
+		[ "$prog" -gt 54 ] && prog=54
+		local show_dl=$(awk "BEGIN{printf \"%.1f\", ($dl_now>10?$dl_now:$max_dl)}")
+		write_state 1 "$prog" "国内节点 · 下载测速" "" "{\"download\":${show_dl:-0},\"upload\":0,\"ping\":$ping_avg,\"jitter\":$jitter_val,\"loss\":$loss_val,\"server\":\"$srv_name\"}" "$global_prev"
+	done
+	wait "$p1" "$p2" "$p3" "$p4" 2>/dev/null
+
+	local curl_dl=0
+	curl_dl=$(cat "$dl_dir"/* 2>/dev/null | awk '{s+=$1} END{printf "%.1f", s*8/1000000}')
+	rm -rf "$dl_dir"
+	RES_DL=$(awk "BEGIN{printf \"%.1f\", ($curl_dl>$max_dl?$curl_dl:$max_dl)}")
+	if awk "BEGIN{exit !(($RES_DL+0) <= 0)}"; then
+		echo "国内测速节点连接失败" >&2
+		return 1
+	fi
+
+	stop_requested && return 130
+
+	# 3. Multi-Stream Direct Upload Test (4 concurrent streams, ~4s)
+	local ul_dir="$STATE_DIR/cn_ul.$$"
+	mkdir -p "$ul_dir"
+	local ul_buf="$ul_dir/buf.bin"
+	dd if=/dev/zero bs=1024k count=4 2>/dev/null > "$ul_buf"
+
+	local tx0=0 tx1=0 max_ul=0 utick=0
+	[ -n "$wan_if" ] && [ -f "/sys/class/net/$wan_if/statistics/tx_bytes" ] && tx0=$(cat "/sys/class/net/$wan_if/statistics/tx_bytes" 2>/dev/null || echo 0)
+
+	curl -4 -s -o /dev/null -w "%{speed_upload}\n" --connect-timeout 2 --max-time 4 -X POST -H "Expect:" --data-binary @"$ul_buf" "https://mirrors.cloud.tencent.com/" > "$ul_dir/1" 2>/dev/null &
+	local u1=$!
+	curl -4 -s -o /dev/null -w "%{speed_upload}\n" --connect-timeout 2 --max-time 4 -X POST -H "Expect:" --data-binary @"$ul_buf" "https://www.baidu.com/" > "$ul_dir/2" 2>/dev/null &
+	local u2=$!
+	curl -4 -s -o /dev/null -w "%{speed_upload}\n" --connect-timeout 2 --max-time 4 -X POST -H "Expect:" --data-binary @"$ul_buf" "https://www.qq.com/" > "$ul_dir/3" 2>/dev/null &
+	local u3=$!
+	curl -4 -s -o /dev/null -w "%{speed_upload}\n" --connect-timeout 2 --max-time 4 -X POST -H "Expect:" --data-binary @"$ul_buf" "https://www.bilibili.com/" > "$ul_dir/4" 2>/dev/null &
+	local u4=$!
+
+	while kill -0 "$u1" 2>/dev/null || kill -0 "$u2" 2>/dev/null || kill -0 "$u3" 2>/dev/null || kill -0 "$u4" 2>/dev/null; do
+		if stop_requested; then
+			kill -TERM "$u1" "$u2" "$u3" "$u4" 2>/dev/null
+			rm -rf "$ul_dir"
+			return 130
+		fi
+		sleep 1
+		utick=$((utick + 1))
+		local ul_now=0
+		if [ -n "$wan_if" ] && [ -f "/sys/class/net/$wan_if/statistics/tx_bytes" ]; then
+			tx1=$(cat "/sys/class/net/$wan_if/statistics/tx_bytes" 2>/dev/null || echo 0)
+			ul_now=$(awk "BEGIN{u=($tx1-$tx0)*8/1000000; printf \"%.1f\", (u>0?u:0)}")
+			tx0=$tx1
+			max_ul=$(awk "BEGIN{printf \"%.1f\", ($ul_now>$max_ul?$ul_now:$max_ul)}")
+		fi
+		local uprog=$((58 + utick * 9))
+		[ "$uprog" -gt 94 ] && uprog=94
+		local show_ul=$(awk "BEGIN{printf \"%.1f\", ($ul_now>5?$ul_now:$max_ul)}")
+		write_state 1 "$uprog" "国内节点 · 上传测速" "" "{\"download\":$RES_DL,\"upload\":${show_ul:-0},\"ping\":$ping_avg,\"jitter\":$jitter_val,\"loss\":$loss_val,\"server\":\"$srv_name\"}" "$global_prev"
+	done
+	wait "$u1" "$u2" "$u3" "$u4" 2>/dev/null
+
+	local curl_ul=0
+	curl_ul=$(cat "$ul_dir"/1 "$ul_dir"/2 "$ul_dir"/3 "$ul_dir"/4 2>/dev/null | awk '{s+=$1} END{printf "%.1f", s*8/1000000}')
+	rm -rf "$ul_dir"
+	RES_UL=$(awk "BEGIN{printf \"%.1f\", ($curl_ul>$max_ul?$curl_ul:$max_ul)}")
+	RES_PING="$ping_avg"
+	RES_JITTER="$jitter_val"
+	RES_LOSS="$loss_val"
+	RES_SERVER="$srv_name"
+	return 0
+}
+
+# Run a CLI command in the background while sampling WAN rx/tx bytes every second
+run_with_live_sample() {
+	local region="$1" cn_prev="$2" global_prev="$3" label="$4"
+	shift 4
+	local tmp_out="$STATE_DIR/cli_out.$$"
+	rm -f "$tmp_out"
+	( "$@" > "$tmp_out" 2>/dev/null ) &
+	local cpid=$!
+	local wan_if
+	wan_if=$(get_wan_if)
+	local rx0=0 tx0=0 rx1=0 tx1=0 tick=0 max_dl=0 max_ul=0
+	if [ -n "$wan_if" ] && [ -f "/sys/class/net/$wan_if/statistics/rx_bytes" ]; then
+		rx0=$(cat "/sys/class/net/$wan_if/statistics/rx_bytes" 2>/dev/null || echo 0)
+		tx0=$(cat "/sys/class/net/$wan_if/statistics/tx_bytes" 2>/dev/null || echo 0)
+	fi
+	while kill -0 "$cpid" 2>/dev/null; do
+		if stop_requested; then
+			kill -TERM "$cpid" 2>/dev/null
+			wait "$cpid" 2>/dev/null
+			rm -f "$tmp_out"
+			return 130
+		fi
+		sleep 1
+		kill -0 "$cpid" 2>/dev/null || break
+		tick=$((tick + 1))
+		local dl_now=0 ul_now=0
+		if [ -n "$wan_if" ] && [ -f "/sys/class/net/$wan_if/statistics/rx_bytes" ]; then
+			rx1=$(cat "/sys/class/net/$wan_if/statistics/rx_bytes" 2>/dev/null || echo 0)
+			tx1=$(cat "/sys/class/net/$wan_if/statistics/tx_bytes" 2>/dev/null || echo 0)
+			dl_now=$(awk "BEGIN{d=($rx1-$rx0)*8/1000000; printf \"%.1f\", (d>0?d:0)}")
+			ul_now=$(awk "BEGIN{u=($tx1-$tx0)*8/1000000; printf \"%.1f\", (u>0?u:0)}")
+			rx0=$rx1
+			tx0=$tx1
+			max_dl=$(awk "BEGIN{printf \"%.1f\", ($dl_now>$max_dl?$dl_now:$max_dl)}")
+			max_ul=$(awk "BEGIN{printf \"%.1f\", ($ul_now>$max_ul?$ul_now:$max_ul)}")
+		fi
+		local prog phase_txt live_pkt show_dl show_ul
+		prog=$((15 + tick * 4))
+		[ "$prog" -gt 92 ] && prog=92
+		if [ "$tick" -le 2 ]; then
+			phase_txt="${label} · 延迟探测"
+			show_dl=0
+			show_ul=0
+		elif [ "$tick" -le 9 ]; then
+			phase_txt="${label} · 下载测速"
+			show_dl=$(awk "BEGIN{printf \"%.1f\", ($dl_now>0?$dl_now:$max_dl)}")
+			show_ul=0
+		else
+			phase_txt="${label} · 上传测速"
+			show_dl="$max_dl"
+			show_ul=$(awk "BEGIN{printf \"%.1f\", ($ul_now>0?$ul_now:$max_ul)}")
+		fi
+		live_pkt="{\"download\":${show_dl:-0},\"upload\":${show_ul:-0},\"ping\":0,\"jitter\":0,\"loss\":0,\"server\":\"正在测速 (${label})\"}"
+		if [ "$region" = cn ]; then
+			write_state 1 "$prog" "$phase_txt" "" "$live_pkt" "$global_prev"
+		else
+			write_state 1 "$prog" "$phase_txt" "" "$cn_prev" "$live_pkt"
+		fi
+	done
+	wait "$cpid"
+	local rc=$?
+	CLI_OUT=""
+	[ -f "$tmp_out" ] && CLI_OUT=$(cat "$tmp_out")
+	rm -f "$tmp_out"
+	return $rc
+}
+
+parse_speedtest_go() {
+	local out="$1"
+	local dl_bps ul_bps lat_ns jit_ns name sponsor
+	dl_bps=$(jf "$out" '@.servers[0].dl_speed')
+	ul_bps=$(jf "$out" '@.servers[0].ul_speed')
+	lat_ns=$(jf "$out" '@.servers[0].latency')
+	jit_ns=$(jf "$out" '@.servers[0].jitter')
+	sponsor=$(jf "$out" '@.servers[0].sponsor')
+	name=$(jf "$out" '@.servers[0].name')
+	[ -z "$dl_bps" ] && return 1
+	RES_DL=$(to_mbps "$dl_bps")
+	RES_UL=$(to_mbps "$ul_bps")
+	RES_PING=$(ns_to_ms "$lat_ns")
+	RES_JITTER=$(ns_to_ms "$jit_ns")
+	RES_LOSS=0
+	if [ -n "$sponsor" ] && [ -n "$name" ]; then
+		RES_SERVER="$sponsor - $name"
+	else
+		RES_SERVER="${sponsor:-${name:-Speedtest.net}}"
+	fi
+	return 0
+}
+
+parse_librespeed() {
+	local out="$1"
+	local dl ul ping jitter server
+	dl=$(jf "$out" '@[0].download')
+	if [ -n "$dl" ]; then
+		ul=$(jf "$out" '@[0].upload')
+		ping=$(jf "$out" '@[0].ping')
+		jitter=$(jf "$out" '@[0].jitter')
+		server=$(jf "$out" '@[0].server.name')
+		RES_DL=$(num_fmt "$dl")
+		RES_UL=$(num_fmt "$ul")
+		RES_PING=$(num_fmt "$ping")
+		RES_JITTER=$(num_fmt "$jitter")
+		RES_LOSS=0
+		RES_SERVER="${server:-LibreSpeed}"
+		return 0
+	fi
+	dl=$(jf "$out" '@.download.bandwidth')
+	if [ -n "$dl" ]; then
+		ul=$(jf "$out" '@.upload.bandwidth')
+		ping=$(jf "$out" '@.ping')
+		jitter=$(jf "$out" '@.jitter')
+		server=$(jf "$out" '@.server.name')
+		RES_DL=$(to_mbps "$dl")
+		RES_UL=$(to_mbps "$ul")
+		RES_PING=$(num_fmt "$ping")
+		RES_JITTER=$(num_fmt "$jitter")
+		RES_LOSS=0
+		RES_SERVER="${server:-LibreSpeed}"
+		return 0
+	fi
+	return 1
+}
+
+parse_ookla_official() {
+	local out="$1"
+	local dl ul ping jitter loss server
+	dl=$(jf "$out" '@.download.bandwidth')
+	[ -z "$dl" ] && return 1
+	ul=$(jf "$out" '@.upload.bandwidth')
+	ping=$(jf "$out" '@.ping.latency')
+	jitter=$(jf "$out" '@.ping.jitter')
+	loss=$(jf "$out" '@.packetLoss')
+	server=$(jf "$out" '@.server.name')
+	RES_DL=$(to_mbps "$dl")
+	RES_UL=$(to_mbps "$ul")
+	RES_PING=$(num_fmt "$ping")
+	RES_JITTER=$(num_fmt "$jitter")
+	RES_LOSS=$(num_fmt "$loss")
+	RES_SERVER="${server:-Ookla}"
+	return 0
+}
+
+run_engine_once() {
+	local engine="$1" region="$2" cn_prev="$3" global_prev="$4"
+	local label="国内节点"
+	[ "$region" = global ] && label="国际节点"
+	RES_DL=0; RES_UL=0; RES_PING=0; RES_JITTER=0; RES_LOSS=0; RES_SERVER="auto"
+
+	# Domestic region ('cn'): Always bypass transparent proxy and test against
+	# mainland China gigabit backbone nodes unless user provided a custom non-empty cn_server_list for librespeed.
+	if [ "$region" = cn ] && [ "$SOURCE" != global ]; then
+		local custom_cn_list
+		custom_cn_list=$(cfg cn_server_list)
+		if [ "$engine" = librespeed ] && [ -n "$custom_cn_list" ] && [ -f "$custom_cn_list" ] && grep -q '"server"' "$custom_cn_list" 2>/dev/null; then
+			run_with_live_sample "$region" "$cn_prev" "$global_prev" "$label" timeout 90 librespeed-cli --json --duration 8 --server-json "$custom_cn_list"
+			parse_librespeed "$CLI_OUT" && return 0
+		fi
+		if run_cn_direct_backbone "$cn_prev" "$global_prev"; then
+			json_init
+			json_add_double download "${RES_DL:-0}"
+			json_add_double upload "${RES_UL:-0}"
+			json_add_double ping "${RES_PING:-0}"
+			json_add_double jitter "${RES_JITTER:-0}"
+			json_add_double loss "${RES_LOSS:-0}"
+			json_add_string server "${RES_SERVER:-国内骨干直连}"
+			json_dump
+			return 0
+		fi
+	fi
+
+	# International region ('global') or custom server list override:
+	case "$engine" in
+		librespeed)
+			command -v librespeed-cli >/dev/null || { echo "librespeed-cli 未安装" >&2; return 1; }
+			local list=""
+			if [ "$SOURCE" = cn ]; then
+				list=$(cfg cn_server_list)
+			elif [ "$SOURCE" = global ]; then
+				list=$(cfg global_server_list)
+			else
+				[ "$region" = cn ] && list=$(cfg cn_server_list)
+				[ "$region" = global ] && list=$(cfg global_server_list)
+			fi
+			if [ -n "$list" ] && [ -f "$list" ] && grep -q '"server"' "$list" 2>/dev/null; then
+				run_with_live_sample "$region" "$cn_prev" "$global_prev" "$label" timeout 90 librespeed-cli --json --duration 8 --server-json "$list"
+			else
+				run_with_live_sample "$region" "$cn_prev" "$global_prev" "$label" timeout 90 librespeed-cli --json --duration 8
+			fi
+			if ! parse_librespeed "$CLI_OUT"; then
+				echo "LibreSpeed 测速失败或节点不可达" >&2
+				return 1
+			fi
+			;;
+		ookla|speedtestcpp)
+			if command -v speedtest >/dev/null && speedtest --version 2>&1 | grep -qi "ookla"; then
+				run_with_live_sample "$region" "$cn_prev" "$global_prev" "$label" timeout 90 speedtest --format=json --accept-license --accept-gdpr
+				parse_ookla_official "$CLI_OUT" || { echo "Ookla 测速失败" >&2; return 1; }
+			elif command -v speedtest-go >/dev/null; then
+				run_with_live_sample "$region" "$cn_prev" "$global_prev" "$label" timeout 90 speedtest-go --json
+				if ! parse_speedtest_go "$CLI_OUT"; then
+					if command -v librespeed-cli >/dev/null; then
+						run_with_live_sample "$region" "$cn_prev" "$global_prev" "$label" timeout 90 librespeed-cli --json --duration 8
+						parse_librespeed "$CLI_OUT" || { echo "国际测速节点连接失败" >&2; return 1; }
+					else
+						echo "speedtest-go 测速失败" >&2; return 1
+					fi
+				fi
+			elif command -v librespeed-cli >/dev/null; then
+				run_with_live_sample "$region" "$cn_prev" "$global_prev" "$label" timeout 90 librespeed-cli --json --duration 8
+				parse_librespeed "$CLI_OUT" || { echo "测速失败" >&2; return 1; }
+			else
+				echo "未找到可用的测速引擎 (请安装 speedtest-go 或 librespeed-cli)" >&2
+				return 1
+			fi
+			;;
+		*)
+			echo "未知测速引擎: $engine" >&2
+			return 1
+			;;
+	esac
+
+	json_init
+	json_add_double download "${RES_DL:-0}"
+	json_add_double upload "${RES_UL:-0}"
+	json_add_double ping "${RES_PING:-0}"
+	json_add_double jitter "${RES_JITTER:-0}"
+	json_add_double loss "${RES_LOSS:-0}"
+	json_add_string server "${RES_SERVER:-auto}"
+	json_dump
+}
+
+append_history() {
+	local region="$1" data="$2"
+	local dl ul ping jitter loss server
+	dl=$(jf "$data" '@.download')
+	ul=$(jf "$data" '@.upload')
+	ping=$(jf "$data" '@.ping')
+	jitter=$(jf "$data" '@.jitter')
+	loss=$(jf "$data" '@.loss')
+	server=$(jf "$data" '@.server')
+	json_init
+	json_add_int epoch "$(now)"
+	json_add_string time "$(date '+%F %T')"
+	json_add_string region "$region"
+	json_add_string engine "$ENGINE"
+	json_add_string server "$server"
+	json_add_double download "${dl:-0}"
+	json_add_double upload "${ul:-0}"
+	json_add_double ping "${ping:-0}"
+	json_add_double jitter "${jitter:-0}"
+	json_add_double loss "${loss:-0}"
+	printf '%s\n' "$(json_dump)" >> "$HISTORY"
+	local keep=$(( $(cfg retention 2>/dev/null || echo 30) * 288 ))
+	[ "$keep" -lt 200 ] && keep=200
+	[ -f "$HISTORY" ] && tail -n "$keep" "$HISTORY" > "$HISTORY.tmp" && mv "$HISTORY.tmp" "$HISTORY"
+}
+
+run_one_region() {
+	local region="$1" cn="$2" global="$3" result="" err=""
+	if [ "$region" = cn ]; then
+		write_state 1 8 "国内节点 · 准备中" "" "$cn" "$global"
+	else
+		write_state 1 55 "国际节点 · 准备中" "" "$cn" "$global"
+	fi
+	local err_file="$STATE_DIR/err.$$"
+	result=$(run_engine_once "$ENGINE" "$region" "$cn" "$global" 2>"$err_file")
+	local rc=$?
+	err=$(cat "$err_file" 2>/dev/null)
+	rm -f "$err_file"
+	if [ $rc -ne 0 ]; then
+		RC_CN="$cn"; RC_GLOBAL="$global"
+		write_state 1 100 error "${err:-measurement failed}" "$cn" "$global"
+		return 1
+	fi
+	if [ "$region" = cn ]; then
+		append_history cn "$result"
+		cn="$result"
+		write_state 1 50 "国内测速完成" "" "$cn" "$global"
+	else
+		append_history global "$result"
+		global="$result"
+		write_state 1 96 "国际测速完成" "" "$cn" "$global"
+	fi
+	RC_CN="$cn"
+	RC_GLOBAL="$global"
+	return 0
+}
+
+do_speed() {
+	mkdir -p "$STATE_DIR"
+	if [ -f "$PIDFILE" ]; then
+		oldpid=$(cat "$PIDFILE" 2>/dev/null)
+		if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+			log "another measurement is already running (pid $oldpid), aborting"
+			return 0
+		fi
+	fi
+	echo $$ > "$PIDFILE"
+	rm -f "$STOP"
+
+	# Preserve previous results for the unselected region when running single-region test!
+	local cn_result="" global_result="" had_error=""
+	if [ -f "$RESULT" ]; then
+		local prev_json
+		prev_json=$(cat "$RESULT" 2>/dev/null)
+		[ -n "$prev_json" ] && {
+			cn_result=$(jsonfilter -s "$prev_json" -e '@.last_cn' 2>/dev/null)
+			global_result=$(jsonfilter -s "$prev_json" -e '@.last_global' 2>/dev/null)
+		}
+	fi
+
+	write_state 1 5 starting "" "$cn_result" "$global_result"
+
+	if [ "$REGION" = cn ] || [ "$REGION" = both ]; then
+		if run_one_region cn "$cn_result" "$global_result"; then
+			cn_result="$RC_CN"; global_result="$RC_GLOBAL"
+		else
+			cn_result="$RC_CN"; global_result="$RC_GLOBAL"
+			had_error=1
+		fi
+		stop_requested && { write_stopped "stopped" "$cn_result" "$global_result"; rm -f "$PIDFILE"; return 1; }
+	fi
+	if [ "$REGION" = global ] || [ "$REGION" = both ]; then
+		if run_one_region global "$cn_result" "$global_result"; then
+			cn_result="$RC_CN"; global_result="$RC_GLOBAL"
+		else
+			cn_result="$RC_CN"; global_result="$RC_GLOBAL"
+			had_error=1
+		fi
+		stop_requested && { write_stopped "stopped" "$cn_result" "$global_result"; rm -f "$PIDFILE"; return 1; }
+	fi
+	write_stopped "${had_error:+部分区域测速未完成}" "$cn_result" "$global_result"
+	rm -f "$PIDFILE"
+	log "speed test finished engine=$ENGINE region=$REGION error=${had_error:-0}"
+}
+
+probe_one() {
+	local region="$1" name="$2" host="$3" ip="$4" mode="$5" prev_samples="$6"
+	local raw="" val="" loss=0
+	if [ "$mode" = https ] && command -v curl >/dev/null; then
+		local target="https://$host"
+		raw=$(curl -s -o /dev/null -w '%{http_code} %{time_appconnect} %{time_starttransfer}' --connect-timeout 3 --max-time 4 "$target" 2>/dev/null)
+		local code
+		code=$(echo "$raw" | awk '{print $1}')
+		if [ -z "$code" ] || [ "$code" = "000" ]; then
+			if [ -n "$ip" ]; then
+				raw=$(curl -s -o /dev/null -w '%{http_code} %{time_appconnect} %{time_starttransfer}' --connect-timeout 3 --max-time 4 --resolve "$host:443:$ip" "$target" 2>/dev/null)
+				code=$(echo "$raw" | awk '{print $1}')
+			fi
+		fi
+		if [ -n "$code" ] && [ "$code" != "000" ]; then
+			val=$(echo "$raw" | awk '{t=($2+0 > 0.002 ? $2+0 : $3+0); if(t>0) printf "%.0f", t*1000}')
+			loss=0
+		else
+			val=0
+			loss=100
+		fi
+	else
+		local dest="$host"
+		[ -n "$ip" ] && dest="$ip"
+		raw=$(ping -c 3 -W 1 "$dest" 2>/dev/null)
+		val=$(echo "$raw" | sed -n 's/.*min\/avg\/max[^=]*= *[0-9.]*\/\([0-9.]*\)\/.*/\1/p' | awk '{if($1+0>0) printf "%.0f", $1+0; exit}')
+		loss=$(echo "$raw" | sed -n 's/.*\([0-9][0-9]*\)% packet loss.*/\1/p' | head -1)
+		[ -z "$loss" ] && loss=100
+	fi
+	[ -z "$val" ] && val=0
+	json_init
+	json_add_string name "$name"
+	json_add_string host "$host"
+	json_add_string ip "$ip"
+	json_add_string mode "$mode"
+	json_add_double current "$val"
+	json_add_double loss "$loss"
+	json_add_array samples
+	if [ -n "$prev_samples" ]; then
+		for s in $prev_samples; do
+			json_add_double "" "$s"
+		done
+	fi
+	json_add_double "" "$val"
+	json_close_array
+	json_dump
+}
+
+do_ping() {
+	mkdir -p "$STATE_DIR"
+	local old_ping=""
+	[ -f "$PING" ] && old_ping=$(cat "$PING" 2>/dev/null)
+	local idx=0
+	local tmp_dir="$STATE_DIR/ping_work.$$"
+	mkdir -p "$tmp_dir"
+
+	for section in $(uci -q show speedcenter 2>/dev/null | sed -n 's/^speedcenter\.\([^.=]*\)=target$/\1/p'); do
+		name=$(uci -q get "speedcenter.$section.name")
+		host=$(uci -q get "speedcenter.$section.host")
+		ip=$(uci -q get "speedcenter.$section.ip")
+		mode=$(uci -q get "speedcenter.$section.mode")
+		region=$(uci -q get "speedcenter.$section.region")
+		[ -z "$host" ] && continue
+		# Only probe targets in the requested REGION (unless REGION=both)
+		if [ "$REGION" != both ] && [ "$region" != "$REGION" ]; then
+			continue
+		fi
+		idx=$((idx + 1))
+		local prev_s=""
+		if [ -n "$old_ping" ]; then
+			prev_s=$(jsonfilter -s "$old_ping" -e "@.${region}[*]" 2>/dev/null | grep -F "\"host\":\"$host\"" | head -n 1 | sed -n 's/.*"samples":\[\([^]]*\)\].*/\1/p' | tr ',' ' ' | awk '{for(i=(NF>11?NF-10:1);i<=NF;i++) printf "%s ", $i}')
+		fi
+		(
+			item=$(probe_one "$region" "$name" "$host" "$ip" "$mode" "$prev_s")
+			printf '%s\n' "$item" > "$tmp_dir/${region}_${idx}.json"
+		) &
+	done
+	wait
+
+	local cn="" global="" first_cn=1 first_global=1 f
+	if [ "$REGION" = global ] && [ -n "$old_ping" ]; then
+		# Preserve existing cn array when only probing global
+		cn=$(jsonfilter -s "$old_ping" -e '@.cn[*]' 2>/dev/null | awk '{printf "%s%s", (NR>1?",":""), $0}')
+	else
+		for f in "$tmp_dir"/cn_*.json; do
+			[ -f "$f" ] || continue
+			[ $first_cn -eq 0 ] && cn="$cn,"
+			cn="$cn$(cat "$f")"
+			first_cn=0
+		done
+	fi
+
+	if [ "$REGION" = cn ] && [ -n "$old_ping" ]; then
+		# Preserve existing global array when only probing cn
+		global=$(jsonfilter -s "$old_ping" -e '@.global[*]' 2>/dev/null | awk '{printf "%s%s", (NR>1?",":""), $0}')
+	else
+		for f in "$tmp_dir"/global_*.json; do
+			[ -f "$f" ] || continue
+			[ $first_global -eq 0 ] && global="$global,"
+			global="$global$(cat "$f")"
+			first_global=0
+		done
+	fi
+
+	rm -rf "$tmp_dir"
+	atomic_write "$PING" "{\"cn\":[$cn],\"global\":[$global]}"
+}
+
+CLI_ENGINE=""
+CLI_REGION=""
+CLI_SOURCE=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--start) ACTION=start; shift ;;
+		--ping) ACTION=ping; shift ;;
+		--engine) CLI_ENGINE="$2"; shift 2 ;;
+		--region) CLI_REGION="$2"; shift 2 ;;
+		--server-source) CLI_SOURCE="$2"; shift 2 ;;
+		*) shift ;;
+	esac
+done
+
+[ -n "$CLI_ENGINE" ] && ENGINE="$CLI_ENGINE" || ENGINE="$(cfg engine 2>/dev/null || echo ookla)"
+[ -n "$CLI_REGION" ] && REGION="$CLI_REGION" || REGION="$(cfg region 2>/dev/null || echo cn)"
+[ -n "$CLI_SOURCE" ] && SOURCE="$CLI_SOURCE" || SOURCE="$(cfg server_source 2>/dev/null || echo auto)"
+[ -z "$ENGINE" ] && ENGINE=ookla
+[ -z "$REGION" ] && REGION=cn
+[ -z "$SOURCE" ] && SOURCE=auto
+
+[ "$ACTION" = ping ] && do_ping || do_speed

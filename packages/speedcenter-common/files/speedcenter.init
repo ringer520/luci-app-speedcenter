@@ -1,0 +1,49 @@
+#!/bin/sh /etc/rc.common
+
+START=96
+USE_PROCD=1
+
+CRON_FILE=/etc/crontabs/root
+MARKER="# speedcenter scheduled test"
+
+sync_cron() {
+	local schedule line cron_line=""
+	schedule=$(uci -q get speedcenter.main.schedule || echo off)
+	[ -z "$schedule" ] && schedule=off
+	if [ "$schedule" != off ]; then
+		case "$schedule" in
+			6h) cron_line="0 */6 * * *" ;;
+			12h) cron_line="0 0,12 * * *" ;;
+			1d) cron_line="0 3 * * *" ;;
+			7d) cron_line="0 3 * * 0" ;;
+		esac
+	fi
+	[ -f "$CRON_FILE" ] || touch "$CRON_FILE"
+	grep -v "$MARKER" "$CRON_FILE" > "$CRON_FILE.sc" 2>/dev/null || true
+	if [ -n "$cron_line" ]; then
+		# runner reads engine/region from UCI when no CLI args are given
+		echo "$cron_line /usr/libexec/speedcenter-run --start $MARKER" >> "$CRON_FILE.sc"
+	fi
+	mv "$CRON_FILE.sc" "$CRON_FILE"
+	/etc/init.d/cron restart >/dev/null 2>&1
+}
+
+start_service() {
+	mkdir -p /tmp/speedcenter
+	sync_cron
+}
+
+stop_service() {
+	grep -v "$MARKER" "$CRON_FILE" > "$CRON_FILE.sc" 2>/dev/null || true
+	mv "$CRON_FILE.sc" "$CRON_FILE"
+	/etc/init.d/cron restart >/dev/null 2>&1
+}
+
+reload_service() {
+	sync_cron
+	/etc/init.d/rpcd reload >/dev/null 2>&1
+}
+
+service_triggers() {
+	procd_add_reload_trigger "speedcenter"
+}

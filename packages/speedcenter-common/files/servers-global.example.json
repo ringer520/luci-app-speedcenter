@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Las Vegas, United States",
+    "server": "https://lv1.backend.librespeed.nixnet.services/",
+    "dlURL": "garbage.php",
+    "ulURL": "empty.php",
+    "pingURL": "empty.php",
+    "getIpURL": "getIP.php"
+  },
+  {
+    "name": "New York, United States",
+    "server": "https://ny1.backend.librespeed.nixnet.services/",
+    "dlURL": "garbage.php",
+    "ulURL": "empty.php",
+    "pingURL": "empty.php",
+    "getIpURL": "getIP.php"
+  },
+  {
+    "name": "Falkenstein, Germany",
+    "server": "//de4.backend.librespeed.org/",
+    "dlURL": "garbage.php",
+    "ulURL": "empty.php",
+    "pingURL": "empty.php",
+    "getIpURL": "getIP.php"
+  }
+]

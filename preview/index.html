@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpeedCenter 界面原型</title>
+<link rel="stylesheet" href="../applications/luci-app-speedcenter/htdocs/luci-static/resources/speedcenter/style.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="../applications/luci-app-speedcenter/htdocs/luci-static/resources/speedcenter/app.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+  var config = {
+    engine: 'ookla',
+    region: 'both',
+    serverSource: 'auto',
+    theme: 'auto',
+    baselineMbps: 500,
+    cnServerList: '',
+    globalServerList: '',
+    retention: 30,
+    schedule: 'off',
+    targets: 'cn,百度,www.baidu.com,,icmp\ncn,腾讯,www.qq.com,,icmp\ncn,B站,www.bilibili.com,,icmp\nglobal,Google,www.google.com,142.250.196.68,https\nglobal,GitHub,github.com,140.82.114.4,https\nglobal,Cloudflare,www.cloudflare.com,104.16.132.229,https'
+  };
+
+  var history = [];
+  var base = Date.now();
+  for (var i = 0; i < 14; i++) {
+    var cn = i % 3 !== 0;
+    history.push({
+      epoch: Math.floor((base - i * 3600 * 1000) / 1000),
+      time: new Date(base - i * 3600 * 1000).toLocaleString('zh-CN', { hour12: false }),
+      region: cn ? 'cn' : 'global',
+      engine: pick(['ookla', 'librespeed', 'speedtestcpp']),
+      server: cn ? pick(['中国电信-上海', '中国联通-北京', '中国移动-广州']) : pick(['Hong Kong', 'Singapore', 'Frankfurt', 'Los Angeles']),
+      download: Math.round(rand(cn ? 320 : 48, cn ? 940 : 310)),
+      upload: Math.round(rand(cn ? 120 : 20, cn ? 480 : 160)),
+      ping: Math.round(rand(cn ? 5 : 90, cn ? 28 : 260)),
+      jitter: Math.round(rand(1, 12)),
+      loss: Math.round(rand(0, 2))
+    });
+  }
+
+  var ping = {
+    cn: [
+      { name: '百度', host: 'www.baidu.com', ip: '', mode: 'icmp', current: 9, loss: 0, samples: [11, 10, 9, 12, 9, 8, 9] },
+      { name: '腾讯', host: 'www.qq.com', ip: '', mode: 'icmp', current: 12, loss: 0, samples: [14, 13, 12, 11, 13, 12, 12] },
+      { name: 'B站', host: 'www.bilibili.com', ip: '', mode: 'icmp', current: 17, loss: 1, samples: [19, 18, 17, 22, 17, 16, 17] },
+      { name: '阿里', host: 'www.aliyun.com', ip: '', mode: 'https', current: 24, loss: 0, samples: [26, 25, 24, 27, 24, 23, 24] }
+    ],
+    global: [
+      { name: 'Google', host: 'www.google.com', ip: '142.250.196.68', mode: 'https', current: 186, loss: 3, samples: [192, 188, 186, 203, 184, 180, 186] },
+      { name: 'GitHub', host: 'github.com', ip: '140.82.114.4', mode: 'https', current: 154, loss: 0, samples: [160, 158, 154, 157, 152, 150, 154] },
+      { name: 'Cloudflare', host: 'www.cloudflare.com', ip: '104.16.132.229', mode: 'https', current: 62, loss: 0, samples: [68, 65, 62, 64, 60, 61, 62] },
+      { name: '新加坡节点', host: 'speedtest.singapore.net', ip: '103.27.186.11', mode: 'icmp', current: 88, loss: 1, samples: [95, 91, 88, 92, 86, 87, 88] }
+    ]
+  };
+
+  var status = { running: false, progress: 0, live: {}, lastResult: null };
+  var timer = null;
+
+  function fakeRun(opts) {
+    var includeCn = opts.region === 'both' || opts.region === 'cn';
+    var includeGlobal = opts.region === 'both' || opts.region === 'global';
+    var progress = 0;
+    status.running = true;
+    status.progress = 0;
+    status.live = {};
+    status.lastResult = null;
+    var serversCn = ['中国电信-上海 5G', '中国联通-北京骨干', '中国移动-广州千兆'];
+    var serversGlobal = ['Hong Kong · Equinix', 'Singapore · Core', 'Tokyo · NTT', 'Los Angeles · CN2'];
+    var cnServer = pick(serversCn), globalServer = pick(serversGlobal);
+    var cnTargetDl = Math.round(rand(520, 910)), cnTargetUl = Math.round(rand(180, 420));
+    var cnPing = Math.round(rand(6, 18)), cnJitter = Math.round(rand(1, 4)), cnLoss = 0;
+    var glTargetDl = Math.round(rand(140, 320)), glTargetUl = Math.round(rand(45, 150));
+    var glPing = Math.round(rand(68, 165)), glJitter = Math.round(rand(3, 12)), glLoss = Math.round(rand(0, 1));
+
+    timer = setInterval(function () {
+      progress += rand(4, 6.5);
+      if (progress >= 100) progress = 100;
+      status.progress = progress;
+
+      if (includeCn && includeGlobal) {
+        if (progress < 52) {
+          var pCn = progress / 52;
+          status.phase = pCn < 0.18 ? '国内节点 · 延迟探测' : pCn < 0.62 ? '国内节点 · 下载测速' : '国内节点 · 上传测速';
+          var dlRatio = pCn < 0.18 ? 0 : Math.min(1, (pCn - 0.18) / 0.42);
+          var ulRatio = pCn < 0.62 ? 0 : Math.min(1, (pCn - 0.62) / 0.38);
+          status.live.cn = {
+            download: Math.round(cnTargetDl * (1 - Math.pow(1 - dlRatio, 2)) + (dlRatio > 0 ? rand(-12, 12) : 0)),
+            upload: Math.round(cnTargetUl * (1 - Math.pow(1 - ulRatio, 2)) + (ulRatio > 0 ? rand(-6, 6) : 0)),
+            ping: cnPing, jitter: cnJitter, loss: cnLoss, server: cnServer
+          };
+        } else {
+          var pGl = (progress - 52) / 48;
+          status.phase = pGl < 0.18 ? '国际节点 · 延迟探测' : pGl < 0.62 ? '国际节点 · 下载测速' : '国际节点 · 上传测速';
+          var gDlRatio = pGl < 0.18 ? 0 : Math.min(1, (pGl - 0.18) / 0.42);
+          var gUlRatio = pGl < 0.62 ? 0 : Math.min(1, (pGl - 0.62) / 0.38);
+          status.live.cn = {
+            download: cnTargetDl, upload: cnTargetUl,
+            ping: cnPing, jitter: cnJitter, loss: cnLoss, server: cnServer
+          };
+          status.live.global = {
+            download: Math.round(glTargetDl * (1 - Math.pow(1 - gDlRatio, 2)) + (gDlRatio > 0 ? rand(-6, 6) : 0)),
+            upload: Math.round(glTargetUl * (1 - Math.pow(1 - gUlRatio, 2)) + (gUlRatio > 0 ? rand(-4, 4) : 0)),
+            ping: glPing, jitter: glJitter, loss: glLoss, server: globalServer
+          };
+        }
+      } else {
+        var isCn = includeCn;
+        var pSingle = progress / 100;
+        var rLabel = isCn ? '国内节点' : '国际节点';
+        status.phase = pSingle < 0.18 ? rLabel + ' · 延迟探测' : pSingle < 0.62 ? rLabel + ' · 下载测速' : rLabel + ' · 上传测速';
+        var sDlRatio = pSingle < 0.18 ? 0 : Math.min(1, (pSingle - 0.18) / 0.42);
+        var sUlRatio = pSingle < 0.62 ? 0 : Math.min(1, (pSingle - 0.62) / 0.38);
+        var tDl = isCn ? cnTargetDl : glTargetDl, tUl = isCn ? cnTargetUl : glTargetUl;
+        status.live[isCn ? 'cn' : 'global'] = {
+          download: Math.round(tDl * (1 - Math.pow(1 - sDlRatio, 2))),
+          upload: Math.round(tUl * (1 - Math.pow(1 - sUlRatio, 2))),
+          ping: isCn ? cnPing : glPing,
+          jitter: isCn ? cnJitter : glJitter,
+          loss: isCn ? cnLoss : glLoss,
+          server: isCn ? cnServer : globalServer
+        };
+      }
+      if (progress >= 100) {
+        clearInterval(timer); timer = null;
+        status.running = false;
+        status.phase = '';
+        status.lastResult = JSON.parse(JSON.stringify(status.live));
+        Object.keys(status.lastResult).forEach(function (k) {
+          var d = status.lastResult[k];
+          history.unshift({
+            epoch: Math.floor(Date.now() / 1000),
+            time: new Date().toLocaleString('zh-CN', { hour12: false }),
+            region: k, engine: opts.engine, server: d.server,
+            download: d.download, upload: d.upload, ping: d.ping,
+            jitter: d.jitter, loss: d.loss
+          });
+        });
+        if (history.length > 200) history.length = 200;
+      }
+    }, 420);
+  }
+
+  var adapter = {
+    getConfig: function () { return Promise.resolve(JSON.parse(JSON.stringify(config))); },
+    saveConfig: function (cfg) { config = JSON.parse(JSON.stringify(cfg)); return Promise.resolve(true); },
+    getStatus: function () { return Promise.resolve(JSON.parse(JSON.stringify(status))); },
+    startSpeed: function (opts) { fakeRun(opts); return Promise.resolve(true); },
+    stopSpeed: function () {
+      if (timer) clearInterval(timer);
+      timer = null; status.running = false; status.progress = 0;
+      return Promise.resolve(true);
+    },
+    getHistory: function () { return Promise.resolve(JSON.parse(JSON.stringify(history))); },
+    getPing: function () { return Promise.resolve(JSON.parse(JSON.stringify(ping))); },
+    startPing: function (region) {
+      (ping[region] || []).forEach(function (item) {
+        var baseVal = item.mode === 'https' ? (region === 'cn' ? 18 : 120) : (region === 'cn' ? 10 : 80);
+        var v = Math.round(rand(baseVal * 0.6, baseVal * 1.7));
+        item.current = v;
+        item.samples = (item.samples || []).concat([v]).slice(-16);
+        item.loss = Math.round(rand(0, 3));
+      });
+      return Promise.resolve(true);
+    }
+  };
+
+  window.SpeedCenterUI.createApp(document.getElementById('app'), adapter);
+})();
+</script>
+</body>
+</html>

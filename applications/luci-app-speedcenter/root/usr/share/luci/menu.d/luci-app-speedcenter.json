@@ -1,0 +1,10 @@
+{
+  "admin/network/speedcenter": {
+    "title": "SpeedCenter",
+    "order": 72,
+    "action": {
+      "type": "view",
+      "path": "speedcenter/main"
+    }
+  }
+}
