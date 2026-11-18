@@ -19,6 +19,9 @@ DIST = os.path.join(ROOT, "dist")
 PKGVER = "0.1.0-r1"
 
 STATIC = [
+    "www/luci-static/resources/speedcenter/util.js",
+    "www/luci-static/resources/speedcenter/charts.js",
+    "www/luci-static/resources/speedcenter/views.js",
     "www/luci-static/resources/speedcenter/app.js",
     "www/luci-static/resources/speedcenter/style.css",
     "www/luci-static/resources/view/speedcenter/main.js",

@@ -45,12 +45,13 @@ function toTargets(text) {
 	return text;
 }
 
+const SC_SCRIPTS = [ 'util.js', 'charts.js', 'views.js', 'app.js' ];
+
 return view.extend({
 	load() {
-		return Promise.all([
-			loadStyle(L.resource(SC_BASE + 'style.css')),
-			loadScript(L.resource(SC_BASE + 'app.js'))
-		]);
+		// scripts depend on each other → load strictly in order
+		return loadStyle(L.resource(SC_BASE + 'style.css')).then(() =>
+			SC_SCRIPTS.reduce((p, f) => p.then(() => loadScript(L.resource(SC_BASE + f))), Promise.resolve()));
 	},
 
 	render() {

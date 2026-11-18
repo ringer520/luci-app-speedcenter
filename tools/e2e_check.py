@@ -48,10 +48,8 @@ def main():
         # ---- Overview: speed test ----
         check("speed cards present", page.locator(".sc-region").count() == 2)
         check("shared grand gauge rendered", page.locator(".sc-gauge svg").count() == 1)
-        page.select_option("#sc-engine", "librespeed")
-        page.select_option("#sc-region", "both")
-        page.select_option("#sc-source", "global")
-        check("controls selectable", page.input_value("#sc-engine") == "librespeed")
+        page.click('.sc-seg-btn[data-region="both"]')
+        check("region selectable", page.locator('.sc-seg-btn[data-region="both"].active').count() == 1)
         page.click("#sc-start")
         check("start button disabled while running", page.locator("#sc-start").is_disabled())
         page.wait_for_timeout(800)
@@ -60,7 +58,7 @@ def main():
         page.wait_for_function("() => !document.querySelector('#sc-start').disabled", timeout=20000)
         check("speed test completes", not page.locator("#sc-start").is_disabled())
         # download value lives in the gauge's SVG <text> node
-        gauge_text = (page.locator('[data-gauge="cn"] svg text').first.text_content() or "").strip()
+        gauge_text = (page.locator('[data-gauge="main"] svg text').first.text_content() or "").strip()
         check("download metric populated", gauge_text not in ("", "--"), f"gauge={gauge_text}")
 
         # ---- Latency tab ----

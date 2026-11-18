@@ -8,6 +8,9 @@
 </head>
 <body>
 <div id="app"></div>
+<script src="../applications/luci-app-speedcenter/htdocs/luci-static/resources/speedcenter/util.js"></script>
+<script src="../applications/luci-app-speedcenter/htdocs/luci-static/resources/speedcenter/charts.js"></script>
+<script src="../applications/luci-app-speedcenter/htdocs/luci-static/resources/speedcenter/views.js"></script>
 <script src="../applications/luci-app-speedcenter/htdocs/luci-static/resources/speedcenter/app.js"></script>
 <script>
 (function () {
@@ -162,12 +165,15 @@
     getHistory: function () { return Promise.resolve(JSON.parse(JSON.stringify(history))); },
     getPing: function () { return Promise.resolve(JSON.parse(JSON.stringify(ping))); },
     startPing: function (region) {
-      (ping[region] || []).forEach(function (item) {
-        var baseVal = item.mode === 'https' ? (region === 'cn' ? 18 : 120) : (region === 'cn' ? 10 : 80);
-        var v = Math.round(rand(baseVal * 0.6, baseVal * 1.7));
-        item.current = v;
-        item.samples = (item.samples || []).concat([v]).slice(-16);
-        item.loss = Math.round(rand(0, 3));
+      var keys = region === 'both' ? ['cn', 'global'] : [region];
+      keys.forEach(function (k) {
+        (ping[k] || []).forEach(function (item) {
+          var baseVal = item.mode === 'https' ? (k === 'cn' ? 18 : 120) : (k === 'cn' ? 10 : 80);
+          var v = Math.round(rand(baseVal * 0.6, baseVal * 1.7));
+          item.current = v;
+          item.samples = (item.samples || []).concat([v]).slice(-16);
+          item.loss = Math.round(rand(0, 3));
+        });
       });
       return Promise.resolve(true);
     }

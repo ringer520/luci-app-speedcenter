@@ -143,6 +143,9 @@ def package_luci():
                         "latency monitoring."),
     }
     files = {
+        "www/luci-static/resources/speedcenter/util.js": (f"{base}/htdocs/luci-static/resources/speedcenter/util.js", False),
+        "www/luci-static/resources/speedcenter/charts.js": (f"{base}/htdocs/luci-static/resources/speedcenter/charts.js", False),
+        "www/luci-static/resources/speedcenter/views.js": (f"{base}/htdocs/luci-static/resources/speedcenter/views.js", False),
         "www/luci-static/resources/speedcenter/app.js": (f"{base}/htdocs/luci-static/resources/speedcenter/app.js", False),
         "www/luci-static/resources/speedcenter/style.css": (f"{base}/htdocs/luci-static/resources/speedcenter/style.css", False),
         "www/luci-static/resources/view/speedcenter/main.js": (f"{base}/htdocs/luci-static/resources/view/speedcenter/main.js", False),
@@ -218,6 +221,9 @@ def main():
         for name, ipk, base, files, cfg in jobs:
             data_entries = [(dst, read(f"{base}/{src}"), 0o755 if exe else 0o644)
                             for dst, (src, exe) in files.items()] if files else [
+                ("www/luci-static/resources/speedcenter/util.js", read(f"{base}/htdocs/luci-static/resources/speedcenter/util.js"), 0o644),
+                ("www/luci-static/resources/speedcenter/charts.js", read(f"{base}/htdocs/luci-static/resources/speedcenter/charts.js"), 0o644),
+                ("www/luci-static/resources/speedcenter/views.js", read(f"{base}/htdocs/luci-static/resources/speedcenter/views.js"), 0o644),
                 ("www/luci-static/resources/speedcenter/app.js", read(f"{base}/htdocs/luci-static/resources/speedcenter/app.js"), 0o644),
                 ("www/luci-static/resources/speedcenter/style.css", read(f"{base}/htdocs/luci-static/resources/speedcenter/style.css"), 0o644),
                 ("www/luci-static/resources/view/speedcenter/main.js", read(f"{base}/htdocs/luci-static/resources/view/speedcenter/main.js"), 0o644),
