@@ -12,13 +12,14 @@ import tarfile
 import gzip
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 DIST = os.path.join(ROOT, "dist")
 os.makedirs(DIST, exist_ok=True)
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 RELEASE = "1"
 PKGVER = f"{VERSION}-r{RELEASE}"         # apk style; ipk accepts it too
 MAINTAINER = "SpeedCenter contributors <speedcenter@example.com>"
@@ -26,6 +27,7 @@ MAINTAINER = "SpeedCenter contributors <speedcenter@example.com>"
 
 def tar_gz_from_entries(entries):
     """entries: list of (arcname, data_bytes, mode). Returns gzip tar bytes."""
+    now = int(time.time())
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w", format=tarfile.GNU_FORMAT) as tf:
         for arcname, data, mode in entries:
@@ -36,7 +38,7 @@ def tar_gz_from_entries(entries):
             info.gid = 0
             info.uname = "root"
             info.gname = "root"
-            info.mtime = 0
+            info.mtime = now
             tf.addfile(info, io.BytesIO(data))
     return gzip.compress(raw.getvalue(), mtime=0)
 

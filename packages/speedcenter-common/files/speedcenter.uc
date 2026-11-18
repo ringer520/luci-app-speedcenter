@@ -7,18 +7,21 @@ import { readfile, writefile } from 'fs';
 import { cursor } from 'uci';
 
 const STATE_DIR = '/tmp/speedcenter';
+const HISTORY_DIR = '/etc/speedcenter';
 const STATE = `${STATE_DIR}/state.json`;
 const RESULT = `${STATE_DIR}/result.json`;
 const PING = `${STATE_DIR}/ping.json`;
-const HISTORY = `${STATE_DIR}/history.jsonl`;
+const HISTORY = `${HISTORY_DIR}/history.jsonl`;
+const LEGACY_HISTORY = `${STATE_DIR}/history.jsonl`;
 const STOP = `${STATE_DIR}/stop`;
 const RUN = '/usr/libexec/speedcenter-run';
 const ENGINES = [ 'ookla', 'librespeed', 'speedtestcpp' ];
 const REGIONS = [ 'cn', 'global', 'both' ];
 const SOURCES = [ 'auto', 'cn', 'global' ];
+const CN_NODES = [ 'auto', 'tencent', 'tsinghua', 'aliyun' ];
 
 function ensure_dir() {
-	system(`mkdir -p ${STATE_DIR} 2>/dev/null`);
+	system(`mkdir -p ${STATE_DIR} ${HISTORY_DIR} 2>/dev/null`);
 }
 
 function read_json(path) {
@@ -62,6 +65,7 @@ function default_config() {
 	return {
 		engine: 'ookla',
 		region: 'cn',
+		cn_node: 'auto',
 		server_source: 'auto',
 		cn_server_list: '/usr/share/speedcenter/servers-cn.example.json',
 		global_server_list: '/usr/share/speedcenter/servers-global.example.json',
@@ -75,7 +79,8 @@ function default_config() {
 function get_config() {
 	const uci = cursor();
 	const out = default_config();
-	const main = uci.get('speedcenter', 'main') ?? {};
+	const rawMain = uci.get_all('speedcenter', 'main');
+	const main = type(rawMain) == 'object' ? rawMain : {};
 	for (let k in out)
 		if (main[k] != null)
 			out[k] = main[k];
@@ -100,8 +105,9 @@ function launch(args) {
 
 function start(args) {
 	const engine = args.engine ?? 'ookla';
-	const region = args.region ?? 'both';
+	const region = args.region ?? 'cn';
 	const source = args.server_source ?? 'auto';
+	const cnNode = index(CN_NODES, args.cn_node ?? 'auto') >= 0 ? args.cn_node : 'auto';
 	if (index(ENGINES, engine) < 0 || index(REGIONS, region) < 0)
 		return { ok: false, error: 'invalid engine or region' };
 	if (index(SOURCES, source) < 0)
@@ -113,7 +119,7 @@ function start(args) {
 		return { ok: false, error: 'a measurement is already running' };
 
 	system(`rm -f ${STOP}`);
-	launch(`--start --engine ${engine} --region ${region} --server-source ${source}`);
+	launch(`--start --engine ${engine} --region ${region} --server-source ${source} --cn-node ${cnNode}`);
 	return { ok: true };
 }
 
@@ -193,7 +199,14 @@ function result() {
 
 function history(args) {
 	ensure_dir();
-	const text = readfile(HISTORY);
+	let text = readfile(HISTORY);
+	if (text == null || text == '') {
+		const legacy = readfile(LEGACY_HISTORY);
+		if (legacy != null && legacy != '') {
+			writefile(HISTORY, legacy);
+			text = legacy;
+		}
+	}
 	let all = [];
 	if (text != null && text != '') {
 		for (let line in split(trim(text), '\n')) {
@@ -218,7 +231,7 @@ function history(args) {
 		}
 		all = out;
 	}
-	return { entries: all.slice(0, limit) };
+	return { entries: slice(all, 0, limit) };
 }
 
 function ping_start(args) {
@@ -264,40 +277,50 @@ function config() {
 
 function save(args) {
 	const uci = cursor();
-	const fields = [ 'engine', 'region', 'server_source', 'cn_server_list', 'global_server_list', 'theme' ];
+	const fields = [ 'engine', 'region', 'cn_node', 'server_source', 'cn_server_list', 'global_server_list', 'theme' ];
 	for (let k in fields)
 		uci.set('speedcenter', 'main', fields[k], args[fields[k]] ?? '');
 	uci.set('speedcenter', 'main', 'retention', int(args.retention ?? 30));
 	uci.set('speedcenter', 'main', 'schedule', args.schedule ?? 'off');
 	uci.set('speedcenter', 'main', 'baseline_mbps', int(args.baseline_mbps ?? 0));
+	let targetsChanged = false;
 	if (args.targets != null) {
-		const old = [];
-		uci.foreach('speedcenter', 'target', function (s) { push(old, s['.name']); });
-		for (let n in old)
-			uci.delete('speedcenter', n);
-		const lines = split(args.targets, '\n');
-		let i = 0;
-		for (let line in lines) {
-			const parts = split(trim(line), ',');
-			if (length(parts) < 3 || trim(parts[2]) == '')
-				continue;
-			const name = `target${i++}`;
-			uci.set('speedcenter', name, 'target');
-			uci.set('speedcenter', name, 'region', trim(parts[0]) == 'global' ? 'global' : 'cn');
-			uci.set('speedcenter', name, 'name', trim(parts[1]));
-			uci.set('speedcenter', name, 'host', trim(parts[2]));
-			uci.set('speedcenter', name, 'ip', parts[3] ? trim(parts[3]) : '');
-			uci.set('speedcenter', name, 'mode', parts[4] && trim(parts[4]) == 'https' ? 'https' : 'icmp');
+		const old = [], prevLines = [];
+		uci.foreach('speedcenter', 'target', function (s) {
+			push(old, s['.name']);
+			push(prevLines, `${s.region ?? 'cn'},${s.name ?? ''},${s.host ?? ''},${s.ip ?? ''},${s.mode ?? 'icmp'}`);
+		});
+		const nextTrim = trim(args.targets);
+		targetsChanged = (join('\n', prevLines) != nextTrim);
+		if (targetsChanged) {
+			for (let n in old)
+				uci.delete('speedcenter', n);
+			const lines = split(args.targets, '\n');
+			let i = 0;
+			for (let line in lines) {
+				const parts = split(trim(line), ',');
+				if (length(parts) < 3 || trim(parts[2]) == '')
+					continue;
+				const name = `target${i++}`;
+				uci.set('speedcenter', name, 'target');
+				uci.set('speedcenter', name, 'region', trim(parts[0]) == 'global' ? 'global' : 'cn');
+				uci.set('speedcenter', name, 'name', trim(parts[1]));
+				uci.set('speedcenter', name, 'host', trim(parts[2]));
+				uci.set('speedcenter', name, 'ip', parts[3] ? trim(parts[3]) : '');
+				uci.set('speedcenter', name, 'mode', parts[4] && trim(parts[4]) == 'https' ? 'https' : 'icmp');
+			}
 		}
 	}
 	uci.commit('speedcenter');
 	uci.unload('speedcenter');
+	if (targetsChanged)
+		system(`rm -f ${PING}`);
 	system('/etc/init.d/speedcenter reload >/dev/null 2>&1');
 	return { ok: true };
 }
 
 const methods = {
-	start: { args: { engine: '', region: '', server_source: '' }, call: start },
+	start: { args: { engine: '', region: '', server_source: '', cn_node: '' }, call: start },
 	stop: { call: stop },
 	status: { call: status },
 	result: { call: result },
@@ -307,7 +330,7 @@ const methods = {
 	config: { call: config },
 	save: {
 		args: {
-			engine: '', region: '', server_source: '', cn_server_list: '',
+			engine: '', region: '', cn_node: '', server_source: '', cn_server_list: '',
 			global_server_list: '', retention: 0, schedule: '', theme: '', baseline_mbps: 0, targets: ''
 		},
 		call: save

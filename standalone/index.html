@@ -6,25 +6,20 @@
 <title>SpeedCenter · 网络测速与全球延迟观测中心</title>
 <link rel="stylesheet" href="/luci-static/resources/speedcenter/style.css">
 <style>
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #0b0f19; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #0a0c10; }
   .sc-login {
     position: fixed; inset: 0;
-    background:
-      radial-gradient(45% 45% at 20% 25%, rgba(99, 102, 241, 0.28), transparent 70%),
-      radial-gradient(40% 40% at 80% 75%, rgba(6, 182, 212, 0.24), transparent 70%),
-      linear-gradient(145deg, #090d16 0%, #111827 50%, #0b1325 100%);
+    background: #0a0c10;
     display: grid; place-items: center; z-index: 100;
   }
   .sc-login form {
     width: 380px; max-width: calc(100vw - 32px);
     padding: 32px 28px;
-    background: rgba(17, 24, 39, 0.78);
-    backdrop-filter: blur(24px) saturate(160%);
-    -webkit-backdrop-filter: blur(24px) saturate(160%);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 22px;
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-    color: #f8fafc;
+    background: #12151c;
+    border: 1px solid rgba(255, 255, 255, 0.085);
+    border-radius: 18px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+    color: #f3f4f6;
   }
   .sc-login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
   .sc-login-logo {
@@ -49,7 +44,7 @@
 <div id="login" class="sc-login">
   <form id="login-form">
     <div class="sc-login-brand">
-      <div class="sc-login-logo">SC</div>
+      <div class="sc-login-logo"><svg viewBox="0 0 40 40" width="42" height="42"><defs><linearGradient id="lg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#18181b"/><stop offset="100%" stop-color="#27272a"/></linearGradient></defs><rect x="1" y="1" width="38" height="38" rx="10" fill="url(#lg)" stroke="rgba(255,255,255,.14)" stroke-width="1"/><path d="M10.5 26.5 A12 12 0 1 1 29.5 26.5" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="2.8" stroke-linecap="round"/><path d="M10.5 26.5 A12 12 0 0 1 28.8 14.5" fill="none" stroke="#3b82f6" stroke-width="2.8" stroke-linecap="round"/><path d="M20 22 L27.5 14.2" stroke="#f8fafc" stroke-width="2.2" stroke-linecap="round"/><circle cx="20" cy="22" r="2.4" fill="#3b82f6"/></svg></div>
       <h2>SpeedCenter 登录</h2>
     </div>
     <p>使用路由器管理账号登录，会话仅保存在当前浏览器标签页。</p>
@@ -89,7 +84,8 @@
     c = c || {};
     return {
       engine: c.engine || 'ookla',
-      region: c.region || 'both',
+      region: c.region || 'cn',
+      cnNode: c.cn_node || 'auto',
       serverSource: c.server_source || 'auto',
       cnServerList: c.cn_server_list || '',
       globalServerList: c.global_server_list || '',
@@ -115,7 +111,8 @@
       getConfig: function () { return ubus('speedcenter', 'config').then(mapConfig); },
       saveConfig: function (cfg) {
         return ubus('speedcenter', 'save', {
-          engine: cfg.engine, region: cfg.region || 'both',
+          engine: cfg.engine, region: cfg.region || 'cn',
+          cn_node: cfg.cnNode || 'auto',
           server_source: cfg.serverSource || 'auto',
           cn_server_list: cfg.cnServerList || '',
           global_server_list: cfg.globalServerList || '',
@@ -139,7 +136,7 @@
       getResult: function () { return ubus('speedcenter', 'result'); },
       getHistory: function () { return ubus('speedcenter', 'history', { limit: 300 }).then(function (r) { return r.entries || []; }); },
       getPing: function () { return ubus('speedcenter', 'ping'); },
-      startSpeed: function (o) { return ubus('speedcenter', 'start', { engine: o.engine, region: o.region, server_source: o.serverSource || 'auto' }); },
+      startSpeed: function (o) { return ubus('speedcenter', 'start', { engine: o.engine, region: o.region, server_source: o.serverSource || 'auto', cn_node: o.cnNode || 'auto' }); },
       stopSpeed: function () { return ubus('speedcenter', 'stop'); },
       startPing: function (region) { return ubus('speedcenter', 'ping_start', { region: region }); }
     };

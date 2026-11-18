@@ -21,7 +21,8 @@
 
   var config = {
     engine: 'ookla',
-    region: 'both',
+    region: 'cn',
+    cnNode: 'auto',
     serverSource: 'auto',
     theme: 'auto',
     baselineMbps: 500,
@@ -29,7 +30,7 @@
     globalServerList: '',
     retention: 30,
     schedule: 'off',
-    targets: 'cn,百度,www.baidu.com,,icmp\ncn,腾讯,www.qq.com,,icmp\ncn,B站,www.bilibili.com,,icmp\nglobal,Google,www.google.com,142.250.196.68,https\nglobal,GitHub,github.com,140.82.114.4,https\nglobal,Cloudflare,www.cloudflare.com,104.16.132.229,https'
+    targets: 'cn,百度,www.baidu.com,,icmp\ncn,腾讯 QQ,www.qq.com,,icmp\ncn,阿里云,www.aliyun.com,,https\ncn,淘宝,www.taobao.com,,https\ncn,B站,www.bilibili.com,,https\ncn,网易,www.163.com,,icmp\nglobal,Google,www.google.com,142.250.196.68,https\nglobal,YouTube,www.youtube.com,142.250.196.78,https\nglobal,GitHub,github.com,140.82.114.4,https\nglobal,Cloudflare,www.cloudflare.com,104.16.132.229,https\nglobal,OpenAI,openai.com,104.18.32.47,https\nglobal,Apple,www.apple.com,,https'
   };
 
   var history = [];
@@ -53,15 +54,19 @@
   var ping = {
     cn: [
       { name: '百度', host: 'www.baidu.com', ip: '', mode: 'icmp', current: 9, loss: 0, samples: [11, 10, 9, 12, 9, 8, 9] },
-      { name: '腾讯', host: 'www.qq.com', ip: '', mode: 'icmp', current: 12, loss: 0, samples: [14, 13, 12, 11, 13, 12, 12] },
-      { name: 'B站', host: 'www.bilibili.com', ip: '', mode: 'icmp', current: 17, loss: 1, samples: [19, 18, 17, 22, 17, 16, 17] },
-      { name: '阿里', host: 'www.aliyun.com', ip: '', mode: 'https', current: 24, loss: 0, samples: [26, 25, 24, 27, 24, 23, 24] }
+      { name: '腾讯 QQ', host: 'www.qq.com', ip: '', mode: 'icmp', current: 12, loss: 0, samples: [14, 13, 12, 11, 13, 12, 12] },
+      { name: '阿里云', host: 'www.aliyun.com', ip: '', mode: 'https', current: 21, loss: 0, samples: [24, 22, 21, 23, 21, 20, 21] },
+      { name: '淘宝', host: 'www.taobao.com', ip: '', mode: 'https', current: 19, loss: 0, samples: [22, 20, 19, 21, 19, 18, 19] },
+      { name: 'B站', host: 'www.bilibili.com', ip: '', mode: 'https', current: 17, loss: 0, samples: [19, 18, 17, 22, 17, 16, 17] },
+      { name: '网易', host: 'www.163.com', ip: '', mode: 'icmp', current: 14, loss: 0, samples: [16, 15, 14, 15, 14, 13, 14] }
     ],
     global: [
-      { name: 'Google', host: 'www.google.com', ip: '142.250.196.68', mode: 'https', current: 186, loss: 3, samples: [192, 188, 186, 203, 184, 180, 186] },
-      { name: 'GitHub', host: 'github.com', ip: '140.82.114.4', mode: 'https', current: 154, loss: 0, samples: [160, 158, 154, 157, 152, 150, 154] },
-      { name: 'Cloudflare', host: 'www.cloudflare.com', ip: '104.16.132.229', mode: 'https', current: 62, loss: 0, samples: [68, 65, 62, 64, 60, 61, 62] },
-      { name: '新加坡节点', host: 'speedtest.singapore.net', ip: '103.27.186.11', mode: 'icmp', current: 88, loss: 1, samples: [95, 91, 88, 92, 86, 87, 88] }
+      { name: 'Google', host: 'www.google.com', ip: '142.250.196.68', mode: 'https', current: 156, loss: 0, samples: [162, 158, 156, 173, 154, 150, 156] },
+      { name: 'YouTube', host: 'www.youtube.com', ip: '142.250.196.78', mode: 'https', current: 164, loss: 0, samples: [170, 168, 164, 167, 162, 160, 164] },
+      { name: 'GitHub', host: 'github.com', ip: '140.82.114.4', mode: 'https', current: 142, loss: 0, samples: [150, 148, 142, 147, 140, 139, 142] },
+      { name: 'Cloudflare', host: 'www.cloudflare.com', ip: '104.16.132.229', mode: 'https', current: 48, loss: 0, samples: [52, 50, 48, 49, 47, 46, 48] },
+      { name: 'OpenAI', host: 'openai.com', ip: '104.18.32.47', mode: 'https', current: 118, loss: 0, samples: [125, 121, 118, 122, 116, 117, 118] },
+      { name: 'Apple', host: 'www.apple.com', ip: '', mode: 'https', current: 76, loss: 0, samples: [82, 79, 76, 80, 74, 75, 76] }
     ]
   };
 
@@ -76,9 +81,13 @@
     status.progress = 0;
     status.live = {};
     status.lastResult = null;
-    var serversCn = ['中国电信-上海 5G', '中国联通-北京骨干', '中国移动-广州千兆'];
+    var cnMap = {
+      tencent: '腾讯云骨干节点 (广州/上海 BGP)',
+      tsinghua: '清华大学 TUNA 节点 (北京千兆骨干)',
+      aliyun: '阿里云骨干节点 (华东/全国多线)'
+    };
     var serversGlobal = ['Hong Kong · Equinix', 'Singapore · Core', 'Tokyo · NTT', 'Los Angeles · CN2'];
-    var cnServer = pick(serversCn), globalServer = pick(serversGlobal);
+    var cnServer = cnMap[opts.cnNode] || '国内骨干直连 (腾讯·清华·阿里自动)', globalServer = pick(serversGlobal);
     var cnTargetDl = Math.round(rand(520, 910)), cnTargetUl = Math.round(rand(180, 420));
     var cnPing = Math.round(rand(6, 18)), cnJitter = Math.round(rand(1, 4)), cnLoss = 0;
     var glTargetDl = Math.round(rand(140, 320)), glTargetUl = Math.round(rand(45, 150));
@@ -129,7 +138,8 @@
           ping: isCn ? cnPing : glPing,
           jitter: isCn ? cnJitter : glJitter,
           loss: isCn ? cnLoss : glLoss,
-          server: isCn ? cnServer : globalServer
+          server: isCn ? cnServer : globalServer,
+          ip: isCn ? '183.192.196.42' : '203.74.120.18'
         };
       }
       if (progress >= 100) {
@@ -142,7 +152,7 @@
           history.unshift({
             epoch: Math.floor(Date.now() / 1000),
             time: new Date().toLocaleString('zh-CN', { hour12: false }),
-            region: k, engine: opts.engine, server: d.server,
+            region: k, engine: opts.engine, server: d.server, ip: d.ip,
             download: d.download, upload: d.upload, ping: d.ping,
             jitter: d.jitter, loss: d.loss
           });
@@ -154,7 +164,28 @@
 
   var adapter = {
     getConfig: function () { return Promise.resolve(JSON.parse(JSON.stringify(config))); },
-    saveConfig: function (cfg) { config = JSON.parse(JSON.stringify(cfg)); return Promise.resolve(true); },
+    saveConfig: function (cfg) {
+      var prevTargets = config.targets;
+      config = JSON.parse(JSON.stringify(cfg));
+      if (cfg.targets != null && cfg.targets !== prevTargets) {
+        var oldMap = {};
+        ['cn', 'global'].forEach(function (k) { (ping[k] || []).forEach(function (x) { oldMap[x.host] = x; }); });
+        var nextPing = { cn: [], global: [] };
+        String(cfg.targets).split('\n').forEach(function (line) {
+          var p = line.trim().split(',');
+          if (p.length < 3 || !p[2].trim()) return;
+          var r = p[0].trim() === 'global' ? 'global' : 'cn', h = p[2].trim();
+          var prev = oldMap[h];
+          nextPing[r].push({
+            name: p[1].trim() || h, host: h, ip: (p[3] || '').trim(), mode: (p[4] || '').trim() === 'https' ? 'https' : 'icmp',
+            current: prev ? prev.current : Math.round(rand(r === 'cn' ? 8 : 60, r === 'cn' ? 28 : 160)),
+            loss: prev ? prev.loss : 0, samples: prev ? prev.samples : [15, 14, 16]
+          });
+        });
+        ping = nextPing;
+      }
+      return Promise.resolve(true);
+    },
     getStatus: function () { return Promise.resolve(JSON.parse(JSON.stringify(status))); },
     startSpeed: function (opts) { fakeRun(opts); return Promise.resolve(true); },
     stopSpeed: function () {

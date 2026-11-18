@@ -47,9 +47,19 @@ def main():
 
         # ---- Overview: speed test ----
         check("speed cards present", page.locator(".sc-region").count() == 2)
+        check("only 2 region buttons (no both)", page.locator(".sc-seg-btn").count() == 2)
+        check("1/2/3 stepper removed", page.locator(".sc-stepper").count() == 0)
+        check("overview trend card removed", page.locator(".sc-trendcard").count() == 0)
+        check("idle pill hidden when idle", not page.locator(".sc-pill").is_visible())
+        check("custom plugin SVG logo rendered", page.locator(".sc-logo svg").count() == 1)
+        check("cn node selector has auto + 3 nodes", page.locator("#sc-cn-node option").count() == 4)
+        page.select_option("#sc-cn-node", "tencent")
+        check("cn node selectable", page.input_value("#sc-cn-node") == "tencent")
         check("shared grand gauge rendered", page.locator(".sc-gauge svg").count() == 1)
-        page.click('.sc-seg-btn[data-region="both"]')
-        check("region selectable", page.locator('.sc-seg-btn[data-region="both"].active').count() == 1)
+        page.click('.sc-seg-btn[data-region="global"]')
+        check("region selectable", page.locator('.sc-seg-btn[data-region="global"].active').count() == 1)
+        check("cn node hidden when global selected", not page.locator("#sc-cn-node").is_visible())
+        page.click('.sc-seg-btn[data-region="cn"]')
         page.click("#sc-start")
         check("start button disabled while running", page.locator("#sc-start").is_disabled())
         page.wait_for_timeout(800)
@@ -60,12 +70,22 @@ def main():
         # download value lives in the gauge's SVG <text> node
         gauge_text = (page.locator('[data-gauge="main"] svg text').first.text_content() or "").strip()
         check("download metric populated", gauge_text not in ("", "--"), f"gauge={gauge_text}")
+        ip_txt = (page.locator("#sc-ip-chip").text_content() or "").strip()
+        check("connected IP shown after test", "连接 IP：" in ip_txt, ip_txt)
+        # unit toggle Mbps -> MB/s -> Mbps
+        page.click("#sc-unit-toggle")
+        time.sleep(0.2)
+        mbs_text = (page.locator('[data-gauge="main"] svg text').first.text_content() or "").strip()
+        check("unit toggle converts to MB/s", mbs_text != gauge_text and "MB/s" in page.locator(".sc-quad .sc-cell.dl small").text_content(), f"{gauge_text}->{mbs_text}")
+        page.click("#sc-unit-toggle")
+        time.sleep(0.2)
 
         # ---- Latency tab ----
         page.locator(".sc-tab").nth(1).click()
         time.sleep(0.4)
-        check("latency cards present", page.locator(".sc-ping-row").count() >= 6,
+        check("latency cards present", page.locator(".sc-ping-row").count() >= 12,
               f"rows={page.locator('.sc-ping-row').count()}")
+        check("refresh button removed", page.get_by_text("刷新结果").count() == 0)
         page.screenshot(path=os.path.join(SHOTS, "03_latency.png"), full_page=True)
         # click a test button and confirm values refresh
         before = page.locator(".sc-ping-val").first.inner_text()
@@ -107,6 +127,11 @@ def main():
         # ---- Settings tab ----
         page.locator(".sc-tab").nth(3).click()
         time.sleep(0.4)
+        check("visual target editor rows present", page.locator(".sc-target-row").count() >= 12)
+        before_rows = page.locator(".sc-target-row").count()
+        page.locator(".sc-preset-chip").first.click()
+        time.sleep(0.2)
+        check("preset quick-add works", page.locator(".sc-target-row").count() == before_rows + 1)
         check("settings fields present", page.locator("textarea").count() == 1)
         check("schedule select present", page.locator("select").count() >= 2)
         page.screenshot(path=os.path.join(SHOTS, "05_settings.png"), full_page=True)

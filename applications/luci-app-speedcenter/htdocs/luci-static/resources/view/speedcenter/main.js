@@ -4,19 +4,25 @@
 'require ui';
 
 const SC_BASE = 'speedcenter/';
+const SC_VER = '5.3.0';
+
+function verUrl(file) {
+	const u = L.resource(SC_BASE + file);
+	return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'sc=' + SC_VER;
+}
 
 const callStatus = rpc.declare({ object: 'speedcenter', method: 'status', expect: { '': {} } });
 const callResult = rpc.declare({ object: 'speedcenter', method: 'result', expect: { '': {} } });
 const callHistory = rpc.declare({ object: 'speedcenter', method: 'history', params: [ 'from', 'to', 'limit' ], expect: { '': {} } });
 const callPing = rpc.declare({ object: 'speedcenter', method: 'ping', expect: { '': {} } });
 const callConfig = rpc.declare({ object: 'speedcenter', method: 'config', expect: { '': {} } });
-const callStart = rpc.declare({ object: 'speedcenter', method: 'start', params: [ 'engine', 'region', 'server_source' ], expect: { '': {} } });
+const callStart = rpc.declare({ object: 'speedcenter', method: 'start', params: [ 'engine', 'region', 'server_source', 'cn_node' ], expect: { '': {} } });
 const callStop = rpc.declare({ object: 'speedcenter', method: 'stop', expect: { '': {} } });
 const callPingStart = rpc.declare({ object: 'speedcenter', method: 'ping_start', params: [ 'region' ], expect: { '': {} } });
 const callSave = rpc.declare({
 	object: 'speedcenter',
 	method: 'save',
-	params: [ 'engine', 'region', 'server_source', 'cn_server_list', 'global_server_list', 'retention', 'schedule', 'theme', 'baseline_mbps', 'targets' ],
+	params: [ 'engine', 'region', 'cn_node', 'server_source', 'cn_server_list', 'global_server_list', 'retention', 'schedule', 'theme', 'baseline_mbps', 'targets' ],
 	expect: { '': {} }
 });
 
@@ -49,9 +55,9 @@ const SC_SCRIPTS = [ 'util.js', 'charts.js', 'views.js', 'app.js' ];
 
 return view.extend({
 	load() {
-		// scripts depend on each other → load strictly in order
-		return loadStyle(L.resource(SC_BASE + 'style.css')).then(() =>
-			SC_SCRIPTS.reduce((p, f) => p.then(() => loadScript(L.resource(SC_BASE + f))), Promise.resolve()));
+		// scripts depend on each other → load strictly in order with version cache-buster
+		return loadStyle(verUrl('style.css')).then(() =>
+			SC_SCRIPTS.reduce((p, f) => p.then(() => loadScript(verUrl(f))), Promise.resolve()));
 	},
 
 	render() {
@@ -61,6 +67,7 @@ return view.extend({
 			getConfig: () => callConfig().then((c) => ({
 				engine: c.engine || 'ookla',
 				region: c.region || 'cn',
+				cnNode: c.cn_node || 'auto',
 				serverSource: c.server_source || 'auto',
 				cnServerList: c.cn_server_list || '',
 				globalServerList: c.global_server_list || '',
@@ -71,7 +78,7 @@ return view.extend({
 				targets: (c.targets || []).map((t) => [ t.region, t.name, t.host, t.ip, t.mode ].join(',')).join('\n')
 			})),
 			saveConfig: (cfg) => callSave(
-				cfg.engine || 'ookla', cfg.region || 'cn', cfg.serverSource || 'auto',
+				cfg.engine || 'ookla', cfg.region || 'cn', cfg.cnNode || 'auto', cfg.serverSource || 'auto',
 				cfg.cnServerList || '', cfg.globalServerList || '',
 				cfg.retention || 30, cfg.schedule || 'off', cfg.theme || 'auto',
 				Number(cfg.baselineMbps) || 0,
@@ -89,7 +96,7 @@ return view.extend({
 			getResult: () => callResult(),
 			getHistory: () => callHistory(0, 0, 300).then((r) => r.entries || []),
 			getPing: () => callPing(),
-			startSpeed: (opts) => callStart(opts.engine, opts.region, opts.serverSource || 'auto'),
+			startSpeed: (opts) => callStart(opts.engine, opts.region, opts.serverSource || 'auto', opts.cnNode || 'auto'),
 			stopSpeed: () => callStop(),
 			startPing: (region) => callPingStart(region)
 		};

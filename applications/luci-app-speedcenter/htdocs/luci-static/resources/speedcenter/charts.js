@@ -38,14 +38,15 @@
     var node = this.svg = svg('svg', { viewBox: '0 0 240 240', class: 'sc-gauge-svg', role: 'img' });
     var defs = svg('defs', {});
     var g1 = svg('linearGradient', { id: 'scg-dl', x1: '0%', y1: '100%', x2: '100%', y2: '0%' });
-    stop(g1, '0%', '#38bdf8'); stop(g1, '100%', '#6366f1');
+    stop(g1, '0%', '#1e40af'); stop(g1, '100%', '#3b82f6');
     var g2 = svg('linearGradient', { id: 'scg-ul', x1: '0%', y1: '100%', x2: '100%', y2: '0%' });
-    stop(g2, '0%', '#10b981'); stop(g2, '100%', '#2dd4bf');
+    stop(g2, '0%', '#0f766e'); stop(g2, '100%', '#14b8a6');
     var g3 = svg('linearGradient', { id: 'scg-nd', x1: '0%', y1: '0%', x2: '0%', y2: '100%' });
-    stop(g3, '0%', '#38bdf8'); stop(g3, '100%', '#6366f1');
+    stop(g3, '0%', '#2563eb'); stop(g3, '70%', '#1e293b'); stop(g3, '100%', '#64748b');
     defs.appendChild(g1); defs.appendChild(g2); defs.appendChild(g3);
     node.appendChild(defs);
 
+    node.appendChild(svg('circle', { cx: D.cx, cy: D.cy, r: 109, fill: 'none', stroke: 'var(--sc-border)', 'stroke-width': 0.8, 'stroke-opacity': 0.7 }));
     node.appendChild(svg('circle', { cx: D.cx, cy: D.cy, r: 62, fill: 'var(--sc-dial-inner)', stroke: 'var(--sc-border)', 'stroke-width': 1 }));
     node.appendChild(svg('path', { d: arcPath(D.rO), fill: 'none', stroke: 'var(--sc-track)', 'stroke-width': 11, 'stroke-linecap': 'round' }));
     var fgO = svg('path', { d: arcPath(D.rO), fill: 'none', stroke: 'url(#scg-dl)', 'stroke-width': 11, 'stroke-linecap': 'round', class: 'sc-arc-fg', 'stroke-dasharray': '0 ' + D.arcO.toFixed(1) });
@@ -74,41 +75,42 @@
     node.appendChild(comet);
 
     var needle = svg('g', { class: 'sc-needle' });
-    needle.appendChild(svg('polygon', { points: '120,40 117.2,128 120,140 122.8,128', fill: 'url(#scg-nd)' }));
+    needle.appendChild(svg('polygon', { points: '120,38 118.2,128 120,144 121.8,128', fill: 'url(#scg-nd)' }));
     node.appendChild(needle);
-    node.appendChild(svg('circle', { cx: D.cx, cy: D.cy, r: 10, fill: 'var(--sc-surface-solid)', stroke: 'var(--sc-accent)', 'stroke-width': 3 }));
-    node.appendChild(svg('circle', { cx: D.cx, cy: D.cy, r: 3.8, fill: 'var(--sc-accent)' }));
+    node.appendChild(svg('circle', { cx: D.cx, cy: D.cy, r: 9.5, fill: 'var(--sc-surface-solid)', stroke: 'var(--sc-accent)', 'stroke-width': 2.5 }));
+    node.appendChild(svg('circle', { cx: D.cx, cy: D.cy, r: 3.4, fill: 'var(--sc-accent)' }));
 
     // NOTE: the first <text> node is the live value (relied on by the test-suite).
     var valT = text({ x: D.cx, y: 180, 'text-anchor': 'middle', fill: 'var(--sc-text)', 'font-size': 28, 'font-weight': 800, class: 'sc-val' }, '--');
     var modeT = text({ x: D.cx, y: 157, 'text-anchor': 'middle', fill: 'var(--sc-accent)', 'font-size': 9.5, 'font-weight': 700, 'letter-spacing': '0.08em' }, '↓ DOWNLOAD');
+    var unitT = text({ x: D.cx, y: 196, 'text-anchor': 'middle', fill: 'var(--sc-muted)', 'font-size': 11, 'font-weight': 700 }, 'Mbps');
     node.appendChild(valT);
     node.appendChild(modeT);
-    node.appendChild(text({ x: D.cx, y: 196, 'text-anchor': 'middle', fill: 'var(--sc-muted)', 'font-size': 11, 'font-weight': 700 }, 'Mbps'));
+    node.appendChild(unitT);
     node.appendChild(text({ x: 52, y: 220, 'text-anchor': 'middle', fill: 'var(--sc-faint)', 'font-size': 10.5, 'font-weight': 700 }, '0'));
     var midT = text({ x: D.cx, y: 12, 'text-anchor': 'middle', fill: 'var(--sc-faint)', 'font-size': 10, 'font-weight': 700 }, '500');
     var maxT = text({ x: 188, y: 220, 'text-anchor': 'middle', fill: 'var(--sc-faint)', 'font-size': 10.5, 'font-weight': 700 }, '1000');
     node.appendChild(midT);
     node.appendChild(maxT);
 
-    this.t = { dl: 0, ul: 0, max: 1000, focus: 'dl', running: false, hasDl: false, hasUl: false };
+    this.t = { dl: 0, ul: 0, max: 1000, focus: 'dl', running: false, hasDl: false, hasUl: false, unit: 'mbps' };
     this.v = { dl: 0, ul: 0 };
     this.onFrame = null;
-    var born = performance.now(), lit = -1, lastMax = 0, lastMode = '';
+    var born = performance.now(), prevT = born, lit = -1, lastMax = 0, lastUnit = '', lastMode = '';
 
     this.set = function (p) { Object.assign(self.t, p); };
     this.reset = function () { self.v.dl = 0; self.v.ul = 0; };
 
     function frame(now) {
       if (!node.isConnected && now - born > 1500) return;       // detached view → stop the loop
+      var dt = Math.min(0.05, Math.max(0.004, (now - prevT) / 1000));
+      prevT = now;
+      var alpha = 1 - Math.exp(-dt * 7.2);
       var t = self.t, v = self.v;
-      var flutter = function (x) { return x > 0 ? Math.sin(now / 95) * x * 0.012 + Math.cos(now / 160) * x * 0.007 : 0; };
-      var gDl = Math.max(0, t.dl + (t.running && t.focus === 'dl' ? flutter(t.dl) : 0));
-      var gUl = Math.max(0, t.ul + (t.running && t.focus === 'ul' ? flutter(t.ul) : 0));
-      v.dl += (gDl - v.dl) * 0.16;
-      v.ul += (gUl - v.ul) * 0.16;
-      if (Math.abs(gDl - v.dl) < 0.05) v.dl = gDl;
-      if (Math.abs(gUl - v.ul) < 0.05) v.ul = gUl;
+      v.dl += (t.dl - v.dl) * alpha;
+      v.ul += (t.ul - v.ul) * alpha;
+      if (Math.abs(t.dl - v.dl) < 0.05) v.dl = t.dl;
+      if (Math.abs(t.ul - v.ul) < 0.05) v.ul = t.ul;
 
       var max = t.max || 1000;
       var rDl = Math.min(1, v.dl / max), rUl = Math.min(1, v.ul / max);
@@ -134,17 +136,20 @@
         lit = nLit;
       }
 
-      valT.textContent = ulFocus && t.hasUl ? U.speedText(v.ul) : t.hasDl ? U.speedText(v.dl) : '--';
+      valT.textContent = ulFocus && t.hasUl ? U.speedText(v.ul, t.unit) : t.hasDl ? U.speedText(v.dl, t.unit) : '--';
       var mode = ulFocus ? 'ul' : 'dl';
       if (mode !== lastMode) {
         modeT.textContent = ulFocus ? '↑ UPLOAD LIVE' : '↓ DOWNLOAD';
         modeT.setAttribute('fill', ulFocus ? 'var(--sc-up)' : 'var(--sc-accent)');
         lastMode = mode;
       }
-      if (max !== lastMax) {
-        maxT.textContent = String(max);
-        midT.textContent = String(Math.round(max / 2));
+      var u = t.unit || 'mbps';
+      if (max !== lastMax || u !== lastUnit) {
+        maxT.textContent = U.scaleLabel(max, u);
+        midT.textContent = U.scaleLabel(Math.round(max / 2), u);
+        unitT.textContent = U.unitLabel(u);
         lastMax = max;
+        lastUnit = u;
       }
       if (self.onFrame) self.onFrame(v, t, now);
       requestAnimationFrame(frame);
@@ -181,16 +186,17 @@
   }
 
   /** Download/upload history chart. Rows are newest-first. */
-  function trend(rows) {
+  function trend(rows, unit) {
     var W = 1000, H = 200, L = 46, R = 16, T = 14, B = 26, pw = W - L - R, ph = H - T - B;
+    var div = unit === 'mbs' ? 8 : 1;
     var ord = rows.slice().reverse(), vals = [];
     ord.forEach(function (r) {
-      if (typeof r.download === 'number') vals.push(r.download);
-      if (typeof r.upload === 'number') vals.push(r.upload);
+      if (typeof r.download === 'number') vals.push(r.download / div);
+      if (typeof r.upload === 'number') vals.push(r.upload / div);
     });
     var wrap = U.el('div', { class: 'sc-trend' });
     if (!vals.length) return wrap;
-    var max = Math.max.apply(null, vals) * 1.15 || 100;
+    var max = Math.max.apply(null, vals) * 1.15 || (unit === 'mbs' ? 12.5 : 100);
     var s = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'sc-trend-svg' });
     var defs = svg('defs', {});
     [['scd', 'var(--sc-accent)'], ['scu', 'var(--sc-up)']].forEach(function (p) {
@@ -202,13 +208,13 @@
     for (var g = 0; g <= 4; g++) {
       var gy = T + ph * (1 - g / 4);
       s.appendChild(svg('line', { x1: L, y1: gy, x2: W - R, y2: gy, stroke: 'var(--sc-border)', 'stroke-dasharray': g ? '4 4' : 'none' }));
-      s.appendChild(text({ x: L - 8, y: gy + 3.5, 'text-anchor': 'end', fill: 'var(--sc-muted)', 'font-size': 10.5, 'font-weight': 600 }, U.fmt(max * g / 4, 0)));
+      s.appendChild(text({ x: L - 8, y: gy + 3.5, 'text-anchor': 'end', fill: 'var(--sc-muted)', 'font-size': 10.5, 'font-weight': 600 }, U.fmt(max * g / 4, unit === 'mbs' && max < 40 ? 1 : 0)));
     }
     function series(key, color, grad) {
       var a = ord.filter(function (r) { return typeof r[key] === 'number'; });
       if (!a.length) return;
       var pts = a.map(function (r, i) {
-        return [a.length === 1 ? L + pw / 2 : L + i / (a.length - 1) * pw, T + ph - r[key] / max * ph];
+        return [a.length === 1 ? L + pw / 2 : L + i / (a.length - 1) * pw, T + ph - (r[key] / div) / max * ph];
       });
       var line = U.smoothPath(pts);
       s.appendChild(svg('path', { d: line + ' L ' + pts[pts.length - 1][0].toFixed(1) + ' ' + (T + ph) + ' L ' + pts[0][0].toFixed(1) + ' ' + (T + ph) + ' Z', fill: 'url(#trend-' + grad + ')' }));
@@ -226,7 +232,7 @@
     wrap.appendChild(U.el('div', { class: 'sc-trend-legend' }, [
       U.el('span', {}, [U.el('i', { class: 'dot dl' }), '↓ 下载']),
       U.el('span', {}, [U.el('i', { class: 'dot ul' }), '↑ 上传']),
-      U.el('span', { class: 'sc-trend-max', text: '峰值 ' + U.fmt(Math.max.apply(null, vals), 1) + ' Mbps' })
+      U.el('span', { class: 'sc-trend-max', text: '峰值 ' + U.fmt(Math.max.apply(null, vals), 1) + ' ' + U.unitLabel(unit) })
     ]));
     return wrap;
   }

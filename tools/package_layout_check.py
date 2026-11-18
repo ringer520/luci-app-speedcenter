@@ -16,7 +16,7 @@ import tarfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 DIST = os.path.join(ROOT, "dist")
-PKGVER = "0.1.0-r1"
+PKGVER = "0.2.0-r1"
 
 STATIC = [
     "www/luci-static/resources/speedcenter/util.js",

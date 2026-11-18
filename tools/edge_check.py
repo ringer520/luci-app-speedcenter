@@ -36,9 +36,10 @@ with sync_playwright() as p:
     check("tab switching during run survives", page.locator(".sc-app").count() == 1)
     page.wait_for_function("() => !document.querySelector('#sc-start').disabled", timeout=20000)
 
-    # 3. settings with special chars in targets (quotes, commas in name)
+    # 3. settings with special chars in targets (open raw batch editor inside <details>)
     page.locator(".sc-tab").nth(3).click()
     time.sleep(0.3)
+    page.locator(".sc-adv-raw summary").click()
     ta = page.locator("textarea")
     ta.fill('cn,测试"引号,www.example.com,,icmp\nglobal,GitHub,github.com,140.82.114.4,https')
     page.get_by_text("保存设置", exact=True).click()

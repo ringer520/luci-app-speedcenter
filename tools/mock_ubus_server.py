@@ -19,7 +19,7 @@ HISTORY = [
 ]
 PING = {"cn": [], "global": []}
 CONFIG = {
-    "engine": "ookla", "region": "both", "server_source": "auto",
+    "engine": "ookla", "region": "cn", "cn_node": "auto", "server_source": "auto",
     "cn_server_list": "", "global_server_list": "", "retention": 30,
     "schedule": "off", "theme": "auto", "baseline_mbps": 500,
     "targets": [

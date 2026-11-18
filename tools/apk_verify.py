@@ -102,10 +102,7 @@ if __name__ == "__main__":
         sys.exit(1)
     paths = [p for p in sys.argv[1:] if p.endswith(".apk")]
     if not paths:
-        paths = [os.path.join(ROOT, "dist", n) for n in (
-            "speedcenter-common_0.1.0-r1_all.apk",
-            "luci-app-speedcenter_0.1.0-r1_all.apk",
-        )]
+        paths = sorted(os.path.join(ROOT, "dist", n) for n in os.listdir(os.path.join(ROOT, "dist")) if n.endswith(".apk"))
     all_ok = True
     for p in paths:
         r = verify(p)

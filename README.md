@@ -1,7 +1,7 @@
 # SpeedCenter (`luci-app-speedcenter`)
 
-面向 **OpenWrt / ImmortalWrt 25.12 & 24.10** 的现代化双线网络测速与全球网站延迟观测 LuCI 插件。
-采用 **单表盘双轨流光座舱 + 60fps 物理阻尼指针引擎 + 国内外智能直连/代理分流** 架构，一套前端代码同时支持 LuCI 内嵌视图（完美兼容 Argon / Bootstrap 等主题）与独立全屏 WebUI。
+面向 **OpenWrt / ImmortalWrt 25.12 & 24.10** 的现代化分线网络测速与常用网站延迟监测 LuCI 插件。  
+采用模块化前端架构、60fps 时间归一化阻尼双环指针表盘与国内外分线直连/路由策略，一套前端同时支持 LuCI 内嵌视图（适配 Argon / Bootstrap 等主题）与独立 WebUI。
 
 ## 界面预览
 
@@ -9,230 +9,184 @@
 | --- | --- |
 | ![Argon Light](dist/screens/router_real.png) | ![Argon Dark](dist/screens/router_dark.png) |
 
-| 全景座舱（浅色） | 历史趋势与双色带宽对比表 |
+| 常用网站延迟卡片（品牌图标 + 紧凑排版） | 历史趋势与记录统计 |
 | --- | --- |
-| ![Overview](dist/screens/01_overview.png) | ![History](dist/screens/04_history.png) |
+| ![Latency](dist/screens/03_latency.png) | ![History](dist/screens/04_history.png) |
+
+| 可视化延迟站点编辑器（预设一键添加 + 行内编辑） |
+| --- |
+| ![Settings](dist/screens/router_settings.png) |
+
+---
 
 ## 核心特性
 
-- **268px 单表盘双轨流光座舱**：国内外共用中央精密双轨速度表（外环主轨显示 `↓ 下载速率`，内环副轨显示 `↑ 上传速率`），内置 60fps `requestAnimationFrame` 物理阻尼插值引擎，下载与上传阶段自动平滑切换聚焦。
-- **国内物理直连 vs 国际代理智能分流**：
-  - **国内线路 (`cn`)**：自动绕过 Nikki / OpenClash / PassWall 的 Fake-IP 与透明代理劫持，直连国内电信/腾讯/清华/阿里千兆骨干节点，真实跑满物理光纤宽带（实测千兆宽带下载 `829+ Mbps`、上传 `316+ Mbps`、延迟 `12 ms`）。
-  - **国际线路 (`global`)**：走系统默认跨境/代理路由连接海外测速节点，真实检验科学上网与国际出口带宽。
-- **所见即所测（区域独立执行）**：点击「国内线路」只测国内（保留国际历史结果），点击「国际线路」只测国际（保留国内历史结果），选择「双线」则自动依次完成国内外联测。
-- **全球关键站点延迟遥测矩阵**：并发 ICMP / HTTPS（TLS 握手耗时）探测，配备 0~300ms 可视化光谱进度条、多点历史面积波形与质量评级胶囊（极速 / 流畅 / 一般 / 缓慢）。
+- **精密双环表盘与 60fps 平滑动画**：外环显示下载速率、内环显示上传速率，自适应量程刻度（`1 / 2 / 5 × 10ⁿ`），测速聚焦模式下自动隐藏次要卡片。
+- **国内 / 国际分线单独测速**：
+  - 每次只测当前选中的单一区域（`国内` 或 `国际`），互不覆盖另一侧历史展示。
+  - **国内测速 (`cn`)**：绕过 Nikki / OpenClash 等透明代理，直连国内千兆骨干镜像节点并发压测（下载持续 8 秒、上传持续 7 秒，EMA 平滑采样）；支持 **自动选择（腾讯·清华·阿里聚合）**、**腾讯云骨干节点**、**清华大学 TUNA 节点**、**阿里云多线节点** 四个可选选项。
+  - **国际测速 (`global`)**：支持 `speedtest-go` / Ookla / `librespeed-cli`，经路由器当前默认出口策略测速。
+- **实时显示实际连接 IP**：测速过程中及完成后在顶栏显示实际连接的测速服务器 IP（`连接 IP：xxx.xxx.xxx.xxx`），方便确认链路归属。
+- **网速单位一键切换 (`Mbps` ↔ `MB/s`)**：顶栏开关实时切换主表盘刻度与数值、指标卡片、国内外对比条、历史曲线及表格单位，自动记忆偏好。
+- **常用网站延迟监测**：预置 12 个国内与海外常用站点（百度、腾讯 QQ、阿里云、淘宝、B站、网易；Google、YouTube、GitHub、Cloudflare、OpenAI、Apple），内置离线 SVG 品牌图标与 3 列紧凑卡片布局。
+- **可视化延迟站点编辑器**：在「设置」页支持行内增删改监控目标（区域 / 名称 / 域名 / 固定 IP / ICMP 或 HTTPS 模式），提供京东、知乎、抖音、Steam、Netflix、Discord、X 等一键预设，并保留可折叠的 CSV 批量文本导入。
+- **持久化历史记录与定时任务**：历史记录持久化保存在 `/etc/speedcenter/history.jsonl`（路由器重启不丢失），支持 `24H / 7D / 30D / 全部` 筛选、UTF-8 BOM CSV 与 JSON 导出，以及 `6h / 12h / 1d / 7d` cron 定时测速和套餐达标率统计。
+
+---
+
+## 详细安装步骤
+
+首先在 [GitHub Releases](https://github.com/ringer520/luci-app-speedcenter/releases) 页面（或本仓库 `dist/` 目录）下载安装包。  
+所有安装包均为 `all` / `noarch` 纯脚本包，**不区分 x86_64 / ARM64 / MIPS CPU 架构**。
+
+> **如何判断系统包格式？**
+> - **OpenWrt / ImmortalWrt 25.12 及更新版本**：使用 **`apk`**，请下载 `.apk` 包和公钥 `speedcenter.rsa.pub`。
+> - **OpenWrt / ImmortalWrt 24.10 及更早版本**：使用 **`opkg`**，请下载 `.ipk` 包。
+> - 无论哪种方式，**必须按顺序先安装后端 `speedcenter-common`，再安装前端 `luci-app-speedcenter`**。
+
+### 方式一：OpenWrt / ImmortalWrt 25.12+（`apk` 固件，推荐）
+
+#### 方法 A：SSH 命令行一键安装（最快捷）
+
+1. SSH 登录路由器（例如 `ssh root@192.168.1.1`）。
+2. 从 Release 下载安装包并安装（若需 `speedtest-go` 等国际测速引擎，建议一并安装）：
+
+```sh
+# 1. 创建临时目录并下载安装包与公钥（可替换为对应 Release 版本标签）
+mkdir -p /tmp/sc && cd /tmp/sc
+wget -O speedcenter.rsa.pub https://github.com/ringer520/luci-app-speedcenter/releases/download/v0.2.0/speedcenter.rsa.pub
+wget -O speedcenter-common.apk https://github.com/ringer520/luci-app-speedcenter/releases/download/v0.2.0/speedcenter-common_0.2.0-r1_all.apk
+wget -O luci-app-speedcenter.apk https://github.com/ringer520/luci-app-speedcenter/releases/download/v0.2.0/luci-app-speedcenter_0.2.0-r1_all.apk
+
+# 2. 导入 SpeedCenter 签名公钥（只需导入一次，以后网页上传也能直接验签）
+mkdir -p /etc/apk/keys
+cp speedcenter.rsa.pub /etc/apk/keys/
+
+# 3. 刷新源并安装基础依赖与国际测速引擎（如无需国际测速可跳过 speedtest-go）
+apk update
+apk add speedtest-go || apk add librespeed-cli || true
+
+# 4. 先装后端，再装前端
+apk add ./speedcenter-common.apk ./luci-app-speedcenter.apk
+
+# 5. 清理 LuCI 缓存并重启服务
+rm -f /tmp/luci-indexcache* && rm -rf /tmp/luci-modulecache/*
+/etc/init.d/rpcd restart
+/etc/init.d/uhttpd restart
+```
+
+> 若暂不方便从路由器直连 GitHub，也可以先用电脑下载后通过 `scp` / WinSCP 上传到路由器 `/tmp/` 目录，再按第 2~5 步执行。  
+> 若不想导入公钥，SSH 命令行可将第 4 步替换为 `apk add --allow-untrusted ./speedcenter-common.apk ./luci-app-speedcenter.apk`。
+
+#### 方法 B：LuCI 网页「上传软件包」安装
+
+1. 如之前未导入过公钥，先通过 SSH 导入一次 `speedcenter.rsa.pub` 到 `/etc/apk/keys/`（否则网页上传会提示 `UNTRUSTED signature`）。
+2. 打开路由器 LuCI 管理后台 → **系统 → 软件包 → 上传软件包**：
+   - 先上传安装 `speedcenter-common_0.2.0-r1_all.apk`
+   - 再上传安装 `luci-app-speedcenter_0.2.0-r1_all.apk`
+3. 安装后退出重新登录或清理缓存。
+
+---
+
+### 方式二：OpenWrt / ImmortalWrt 24.10 及更早（`opkg` 固件）
+
+1. 下载 `speedcenter-common_0.2.0-r1_all.ipk` 和 `luci-app-speedcenter_0.2.0-r1_all.ipk`，上传至路由器 `/tmp/` 目录。
+2. SSH 登录路由器执行：
+
+```sh
+opkg update
+opkg install rpcd-mod-ucode ucode ucode-mod-fs ucode-mod-uci jsonfilter jshn curl coreutils-timeout
+# 可选：安装国际测速引擎（按固件源可用包二选一）
+opkg install speedtest-go || opkg install librespeed-cli || true
+
+# 先装后端，再装前端
+opkg install /tmp/speedcenter-common_0.2.0-r1_all.ipk
+opkg install /tmp/luci-app-speedcenter_0.2.0-r1_all.ipk
+
+# 清缓存并生效
+rm -f /tmp/luci-indexcache* && rm -rf /tmp/luci-modulecache/*
+/etc/init.d/rpcd restart
+/etc/init.d/uhttpd restart
+```
+
+---
+
+### 安装后首次打开与缓存刷新
+
+1. 打开浏览器进入路由器 LuCI，点击菜单 **「网络 → SpeedCenter」**。
+2. 若此前装过旧版本且打开后仍显示旧界面，请按一次 **`Ctrl + F5`**（macOS 为 `Cmd + Shift + R`）强制刷新浏览器缓存即可。
+
+---
+
+### 升级与卸载
+
+- **升级（保留原有配置与历史记录）**：
+  - `apk` 固件：`apk add --allow-untrusted ./speedcenter-common_0.2.0-r1_all.apk ./luci-app-speedcenter_0.2.0-r1_all.apk` 后清理 LuCI 缓存并重启 `rpcd` / `uhttpd`。
+  - `opkg` 固件：`opkg install --force-reinstall ...` 依次覆盖安装即可。
+- **卸载**：
+  - `apk` 固件：`apk del luci-app-speedcenter speedcenter-common`
+  - `opkg` 固件：`opkg remove luci-app-speedcenter speedcenter-common`
+  - 如需同时清除配置与持久化历史记录：`rm -rf /etc/speedcenter /tmp/speedcenter /etc/config/speedcenter`
+
+---
 
 ## 目录结构（OpenWrt feed 规范）
 
-```
+```text
 speedcenter/
 ├── packages/
-│   └── speedcenter-common/          # 后端：ubus/rpcd ucode + runner + UCI
-│       ├── Makefile                 # package.mk
+│   └── speedcenter-common/              # 后端：ubus/rpcd ucode + runner + UCI
+│       ├── Makefile                     # package.mk
 │       └── files/
-│           ├── speedcenter.uc       # rpcd ucode 插件，暴露 ubus 对象
-│           ├── speedcenter-run      # 独立后台执行器（POSIX sh）
-│           ├── speedcenter.config   # 默认 UCI 配置
-│           ├── speedcenter.init     # 定时测速的 cron 同步
+│           ├── speedcenter.uc           # rpcd ucode 插件，暴露 ubus 对象与持久化历史读写
+│           ├── speedcenter-run          # 独立后台执行器（POSIX sh）
+│           ├── speedcenter.config       # 默认 UCI 配置（含 12 个常用国内/海外站点）
+│           ├── speedcenter.init         # 定时测速 cron 同步
 │           ├── servers-cn.example.json
 │           └── servers-global.example.json
 ├── applications/
-│   └── luci-app-speedcenter/        # 前端：LuCI 视图
-│       ├── Makefile                 # luci.mk
+│   └── luci-app-speedcenter/            # 前端：LuCI 视图
+│       ├── Makefile                     # luci.mk
 │       ├── htdocs/luci-static/resources/
-│       │   ├── speedcenter/{app.js,style.css}   # 通用 UI（内嵌/独立共用）
-│       │   └── view/speedcenter/main.js         # LuCI 视图 + RPC 适配层
+│       │   ├── speedcenter/
+│       │   │   ├── util.js              # DOM/SVG 构建、单位换算、品牌/插件图标
+│       │   │   ├── charts.js            # 60fps 双环指针表盘、Sparkline、历史趋势图
+│       │   │   ├── views.js             # 概览、网站延迟、历史记录、设置（含可视化编辑器）
+│       │   │   ├── app.js               # 状态树、动作分发、轮询与主题/单位切换
+│       │   │   └── style.css            # 浅色/深色设计令牌与响应式布局
+│       │   └── view/speedcenter/main.js # LuCI 视图加载器（带版本参数）与 RPC 适配
 │       └── root/usr/share/
-│           ├── luci/menu.d/...      # 菜单注册（网络分类）
-│           └── rpcd/acl.d/...       # ubus 权限
-├── preview/index.html               # 浏览器可直接打开的交互原型（mock 数据）
-├── standalone/index.html            # 独立 WebUI 外壳（走 /ubus + session 登录）
-├── dist/                            # 【已打包好的可安装文件】
-│   ├── speedcenter-common_0.1.0-r1_all.apk / .ipk
-│   ├── luci-app-speedcenter_0.1.0-r1_all.apk / .ipk
-│   └── speedcenter.rsa.pub          # 【apk 签名公钥】装一次后 Web 上传免 --allow-untrusted
-└── tools/                           # 打包与验证脚本
-    ├── build_packages.py            # 本地生成 ipk + apk（无需工具链，apk 自动签名）
-    ├── ipk2apk.py                   # ipk -> apk 转换器（--sign 加签名段）
-    ├── apk_sign.py / apk_verify.py  # APK v2 签名生成 / OpenSSL 交叉验签
-    ├── keys/                        # 稳定的签名密钥对（勿删，删后用户需重装公钥）
-    ├── e2e_check.py / edge_check.py # UI 端到端 / 边界测试（Playwright）
-    ├── standalone_check.py          # 独立 WebUI 测试
-    └── mock_ubus_server.py          # 模拟 uhttpd /ubus，供本地测试
+│           ├── luci/menu.d/...          # 菜单注册（网络分类）
+│           └── rpcd/acl.d/...           # ubus 权限
+├── preview/index.html                   # 浏览器可直接打开的交互原型（mock 数据）
+├── standalone/index.html                # 独立 WebUI 外壳（走 /ubus + session 登录）
+├── dist/                                # 已打包可安装文件（.apk / .ipk / .rsa.pub / 截图）
+└── tools/                               # 打包、签名校验与 Playwright 自动化测试脚本
 ```
 
-## 直接安装（已打包）
+---
 
-`dist/` 里已有可直接安装的两个包。**25.12 用 apk，装 .apk；24.10 或 opkg 固件装 .ipk。** 先装后端再装前端。
+## 常见排查
 
-### 25.12 / apk —— 先装签名公钥（推荐，一劳永逸）
+1. **装完菜单未出现**：确认两个包均已安装（`apk info -e speedcenter-common luci-app-speedcenter`），执行 `rm -f /tmp/luci-indexcache* && rm -rf /tmp/luci-modulecache/* && /etc/init.d/rpcd restart && /etc/init.d/uhttpd restart`，并在浏览器 `Ctrl + F5`。
+2. **国内测速是否受代理影响**：国内线路会自动通过直连骨干 CDN 压测，不会经过代理节点；如使用自定义 `cn_server_list` 配合 `librespeed`，请确保测速地址位于代理规则直连列表内。
+3. **国际测速实际出口判断**：国际测速经由系统当前默认出站规则执行，测速时界面的 `连接 IP` 芯片会实时展示实际连接的服务端 IP，可直观判断是否命中代理出口或落入直连兜底规则。
 
-apk 包**已经用 SpeedCenter 密钥签名**（APK v2：RSA-SHA1 + RSA-SHA256 双签名）。在 LuCI「系统 → 软件 → 上传软件包」里上传报 `UNTRUSTED signature`，是因为设备还不信任这把密钥。**只需导入一次公钥**，之后网页上传/命令行都能正常装：
+---
+
+## 本地构建与自动化验证
 
 ```sh
-# SSH 登录路由器后执行：把 dist/speedcenter.rsa.pub 传到 /tmp 再导入
-cp /tmp/speedcenter.rsa.pub /etc/apk/keys/
-apk add ./speedcenter-common_0.1.0-r1_all.apk
-apk add ./luci-app-speedcenter_0.1.0-r1_all.apk
-```
+# 生成 .ipk 与已签名的 .apk（含当前构建时间戳，写入 dist/）
+python tools/build_packages.py
 
-导入公钥后，LuCI「系统 → 软件 → 上传软件包」直接上传这两个 .apk 即可，不再报错。
+# 校验包路径、菜单可见性与 APK v2 签名
+python tools/package_layout_check.py
+python tools/apk_verify.py
 
-### 25.12 / apk —— 临时绕过（不想装公钥）
-
-```sh
-apk add --allow-untrusted ./speedcenter-common_0.1.0-r1_all.apk
-apk add --allow-untrusted ./luci-app-speedcenter_0.1.0-r1_all.apk
-```
-
-> 注意：LuCI 网页上传走的不是 `--allow-untrusted`，所以**网页上传场景必须用上面的公钥方案**，或改用 SSH 命令行。
-
-### 24.10 / opkg
-
-```sh
-opkg install ./speedcenter-common_0.1.0-r1_all.ipk
-opkg install ./luci-app-speedcenter_0.1.0-r1_all.ipk
-```
-
-两个包都是 `Architecture: all`（apk 里为 `noarch`），纯脚本无二进制，**不挑 CPU 架构**，任何机型的 25.12 都能装。装完 rpcd 会自动 reload，菜单在「网络 → SpeedCenter」。
-
-签名密钥固定在 `tools/keys/`，重新打包会自动复用同一把密钥——**不要删这个目录**，否则用户得重新安装公钥。自检：`python tools/apk_verify.py`（用 OpenSSL 独立验签 + 校验 datahash 一致性）。
-
-改动代码后重新打包：`python tools/build_packages.py`，产物覆盖 `dist/`。
-
-## 架构要点
-
-- **rpcd 不被阻塞**：测速是长任务，全部交给 `/usr/libexec/speedcenter-run` 后台执行；rpcd 的 ucode 脚本只做短调用、读小 JSON 文件。启动用 `start-stop-daemon -b` / `setsid` 脱离，进程组记录到 `state.json` 的 `pid`，stop 按进程组 kill，避免 CLI 子进程残留。
-- **多引擎可插拔**：`ookla`（Ookla CLI）、`librespeed`（librespeed-cli）、`speedtestcpp`。带宽字段统一按 bytes/s × 8 / 1e6 换算为 Mbps。
-- **双区域**：一次任务可分别跑 `cn` / `global` / `both`，结果分开写入 JSONL 历史，前端分开渲染。
-- **延迟探测**：`icmp`（ping 统计 RTT/丢包）与 `https`（curl `--resolve` 指定 IP，规避被污染域名的 DNS 问题）。
-- **历史**：`/tmp/speedcenter/history.jsonl` 追加写入，按 retention 裁剪，支持 CSV/JSON 导出。
-- **前后端解耦**：UI 逻辑在 `app.js`，通过 adapter 注入 RPC。LuCI 用 `rpc.declare`，独立页用 `/ubus` JSON-RPC + rpcd session。
-
-## 编译集成（25.12）
-
-把两个目录放到对应 feed：
-
-```bash
-# 后端进 packages feed
-cp -r packages/speedcenter-common   <openwrt>/package/feeds/packages/
-# 前端进 luci feed
-cp -r applications/luci-app-speedcenter  <openwrt>/feeds/luci/applications/
-
-# 更新索引并安装依赖
-./scripts/feeds update -a && ./scripts/feeds install -a
-make menuconfig   # Network 下选 speedcenter-common；LuCI -> Applications 下选 luci-app-speedcenter
-make package/speedcenter-common/compile V=s
-make package/luci-app-speedcenter/compile V=s
-```
-
-后端包的 postinst 会自动 `/etc/init.d/rpcd reload`，装完即可用，无需重启。
-
-> 若目标是 24.10：本插件用的 `rpcd-mod-ucode` + `ucode-mod-uci` + ucode `type()`/`time()` API 在 24.10 已具备，理论上可回移；但 `luci-app-librespeed` 官方只在 master/25.12，本文档针对 25.12 验证。
-
-## 真机调试
-
-1. 装上至少一个引擎，例如 `apk add speedtest`（Ookla CLI）或 `apk add librespeed-cli`（24.10 用 `opkg install`）。
-2. 手动跑一次看解析是否正确：
-   ```sh
-   /usr/libexec/speedcenter-run --start --engine ookla --region cn
-   cat /tmp/speedcenter/state.json
-   ```
-3. 如果 `download`/`ping` 全是 0，说明 `jsonfilter` 表达式与引擎实际输出字段不匹配。用 `speedtest --format=json ...` 看原始 JSON，调整 `run_engine_once` 里的 `@.download.bandwidth` 等路径。
-4. 检查 ubus 是否注册：`ubus list | grep speedcenter`，以及 `ubus call speedcenter status`。
-5. 界面路径：LuCI → 网络 → SpeedCenter。
-
-### 装完菜单没出现 / 页面打不开
-
-按下面顺序排查：
-
-1. **确认两个包都装上了**：`apk info -e speedcenter-common; apk info -e luci-app-speedcenter`。少装后端会导致菜单依赖不满足。
-2. **刷新 LuCI 缓存**：强制刷新浏览器（Ctrl+F5），或退出重新登录；必要时 `rm -f /tmp/luci-modulecache/* /tmp/luci-indexcache*`，然后 `/etc/init.d/uhttpd restart`。LuCI 会缓存菜单树，装完常见需要清缓存才出现。
-3. **重载 rpcd / ACL**：`/etc/init.d/rpcd restart`（新装的 ACL 需要 rpcd 重新加载）。
-4. **确认静态资源路径正确**（这版已修复，老包可能错）：
-   ```sh
-   ls -l /www/luci-static/resources/view/speedcenter/main.js
-   ls -l /www/luci-static/resources/speedcenter/app.js
-   ```
-   两个文件必须存在。如果只有 `/htdocs/luci-static/...` 而没有 `/www/...`，说明是旧的错误包——**请重新下载当前 `dist/` 里的包重装**。历史 bug：打包时资源误放到 `htdocs/`，而浏览器从 web 根 `/www` 请求 `/luci-static/...`，导致 JS 404、页面渲染不出来（mock 测试做了路径映射所以之前没暴露）。
-5. **确认菜单注册文件在**：`ls /usr/share/luci/menu.d/luci-app-speedcenter.json`（当前版本菜单无 `depends` 门槛，装上即显示）。
-6. 打开浏览器开发者工具→ Network，刷新看 `/luci-static/...` 是否 404；Console 是否有报错，能快速定位是资源缺失还是 JS 异常。
-
-## 已知注意点
-
-- 路由器 CPU 跑测速会绕过硬件 NAT 加速，结果可能偏低，UI 上已标注“测速在路由器上发起”。
-- Ookla CLI 受 EULA 约束，runner 已带 `--accept-license --accept-gdpr`，正式分发需自行确认合规性。
-- 国内 LibreSpeed 公共列表没有大陆节点，`servers-cn.example.json` 有意留空；国内测速建议用 Ookla 或自建节点。
-- 历史写在 `/tmp`，重启会丢失；如需持久化可在 init 里增加落盘逻辑。
-
-## 第二轮迭代：Bug 修复 + 吸收优秀项目能力（2026-11-16）
-
-### 修复的真机 bug
-
-| 问题 | 影响 | 修复 |
-|---|---|---|
-| **实时数据在后端被丢弃** | `shaped()` 只读 `raw.live.{cn,global}`，而 runner 写的是扁平 `live_cn/live_global`，导致仪表盘永远拿不到实时值 | `shaped()` 兼容嵌套对象/嵌套字符串/扁平字符串三种形态（关键修复） |
-| **丢包率解析错位** | busybox ping 里 `$6` 是 "received"，百分比在 `$7`，丢包率长期显示错误 | 改用正则 `([0-9]+)% packet loss` 提取，兼容 busybox/iputils |
-| **进程崩溃后 UI 卡死** | runner 被 OOM/SIGKILL 杀掉后 state 里 `running:true` 永不清除 | `status()` 用 pid 存活检测自愈，返回 idle + 明确错误信息 |
-| **停止后仍显示测速中** | `stop()` 只发信号不落状态 | stop 直接写 stopped 状态，UI 立即响应 |
-| **历史时间线乱序** | NTP 未同步时按文件顺序展示会乱 | history 按 epoch 降序排序（对齐官方 librespeed 做法） |
-| **区域失败结果丢失** | 失败分支未同步 `RC_*`，最终态 error 为空 | 失败时同步结果变量并把错误带到最终状态 |
-| **UCI 删除未定义行为** | 在 `uci.foreach` 里直接删当前 section | 先收集 section 名再删 |
-| **CSV 中文乱码 / 引号错位** | 无 BOM，且用 `JSON.stringify` 写出 `\"`（Excel 不认） | 加 UTF-8 BOM + RFC4180 转义，文件名带日期 |
-| **主题无法跟随 LuCI** | 默认写死 `light`，覆盖了 LuCI 暗色主题 | 新增 `auto` 三态主题（auto→light→dark），内嵌跟随 LuCI、独立页跟随系统 |
-
-### 吸收的优秀项目能力
-
-- **官方 librespeed**：历史时间范围筛选（24h/7d/30d/全部）、下载/上传趋势折线图、统计卡（记录数/平均/峰值）
-- **keithah Ookla UI**：仪表盘自适应刻度（1/2/5×10ⁿ，突破固定 1000 上限）、测速阶段进度显示、状态胶囊异常态；在此基础上把圆环进度条升级为 **270° 指针式速度表**（渐变发光弧 + 双层刻度 + 平滑摆动指针 + 中心轴帽），就地更新而非重建 SVG
-- **wan-observer**：带宽基线达标率徽章（设置页填套餐带宽，仪表盘显示达标百分比并按 90%/60% 分色）
-
-### 本地验证报告（2026-11-16）
-
-在无头 Chromium 中实测，全部通过，0 个 JS 错误：
-
-| 测试 | 覆盖内容 | 结果 |
-|---|---|---|
-| `e2e_check.py` | 结构/测速全流程、仪表盘、延迟、历史趋势图+筛选+统计、CSV BOM blob、达标率、auto 主题、移动端 | 27/27 |
-| `edge_check.py` | 双击开始、测速中切 tab、特殊字符配置、CSV/JSON 下载、主题跨 tab/三态、快速切换、停止 | 8/8 |
-| `standalone_check.py` | 独立 WebUI 的 session 登录 + 真实 `/ubus` RPC 适配（start/stop/ping/save，含 baseline） | 6/6 |
-
-另有纯逻辑校验：stop 状态 JSON 合法性、丢包率正则、CSV 转义、自适应刻度序列、ucode 结构（括号/无 `typeof`）——全部通过。
-
-**界面迭代（同日）**：仪表盘由圆环进度条重做为 270° 指针式速度表——渐变发光进度弧、11 格刻度（每 25% 加粗）、可平滑摆动的指针与中心轴帽，数值/单位/量程标签重排避免重叠；`updateGauge()` 就地更新 SVG 属性，指针动画 0.45s 与 420ms 数据刷新节奏匹配。随后整体视觉升级为「极光梦幻 / 玻璃拟态」风格：多层 radial 极光光斑缓慢漂移、半透明磨砂卡片（backdrop-filter）、渐变标题与霓虹按钮、胶囊 tab 与状态胶囊；浅色为柔和紫粉青，深色为深空霓虹（紫/品红/青），两套主题共享同一套 CSS 变量。
-
-**第三轮迭代：现代梦幻视觉 2.0 + 交互动效与代码架构全面升级**：
-1. **现代梦幻极光与深度玻璃拟态 2.0**：
-   - 增加五层漂移极光光斑网格（含柔和珊瑚金与星夜青），配合微星芒点阵网格叠加（CSS radial-gradient 48px 网格点阵 + 椭圆径向蒙版）。
-   - 卡片重构为高透光梦幻磨砂（`backdrop-filter: blur(26px) saturate(160%)`），双层内边缘发光光环（`inset 0 1px 1px rgba(255,255,255,0.25)`），悬浮微浮雕动效（`translateY(-2px)` + 扩散光晕）。
-   - 深色模式升级为「深空赛博霓虹」（Deep Space Obsidian + Hyper Cyan & Neon Violet），高对比度高饱和小部件。
-2. **仪表盘全维度动效升级**：
-   - 270° 速度表加入 SVG 柔光扩散滤镜与径向渐变背景光环；测速激活时触发呼吸式光晕（`sc-gauge-running` / `sc-gauge-active`）。
-   - 刻度线扩充为 21 格多级高保真微刻度，粗细与明暗分层，更接近高档跑车/专业仪表的梦幻质感。
-   - 指针升级为流线锥形渐变，中心轴帽增加双层高光。
-3. **图表与微动效**：
-   - 历史趋势折线图（`historyTrend`）升级为渐变填充区域图（Area Chart），带有网格参考线、刻度标签、交互式数据点与浮动数据 Tooltip。
-   - 波形图（`spark` 与 `miniSpark`）加入半透明渐变裙边与光点收尾。
-   - 页面加入阶梯式卡片淡入动画（Staggered Entrance Animation `sc-animate-in`）。
-4. **性能与包编译**：
-   - 自动防抖轮询与页面可见性感知（隐藏标签页降低轮询，测速中自适应加快刷新）。
-   - 键盘快捷键支持（空格快速测速、ESC 停止）。
-   - 自动化构建已同步更新 `dist/` 目录中的已签名 APK 与 IPK 安装包。
-   - 完整回归测试：`e2e_check.py` 27/27 全部通过，`edge_check.py` 8/8 全部通过，`standalone_check.py` 6/6 全部通过，全流程 0 JS 报错。
-
-**交互重构**：测速与国内外网站延迟合并进「测速概览」同屏展示——顶部 Hero 控制条同时驱动两类探测，中部双指针仪表盘，底部国内/海外延迟速览（统计卡 + 逐目标 RTT/丢包/迷你波形）；`pingCard()` 拆成结构 + `updatePingCard()` 就地刷新，延迟数据流入时不再重建 DOM，仪表盘指针动画保持连续。原「网站延迟」tab 保留为完整版（含探测说明）。修复深色全页截图底部露白：渐变背景从 `background-attachment:fixed` 改回随内容铺满，极光光斑层保持 fixed 仅作叠加，`overflow-x:clip` 消除移动端横向溢出。回归 27/27 + 8/8 + 6/6，0 JS 错误。
-
-截图保存在 `dist/screens/`（主界面、测速中、延迟、历史、设置、暗色、移动端、独立页）。
-
-复现测试（本机已有 Playwright + 无头 Chromium）：
-
-```sh
-python tools/mock_ubus_server.py &     # 仅 standalone_check 需要
+# Playwright 端到端 / 边界 / 独立 WebUI 联调测试
+python tools/mock_ubus_server.py &
 python tools/e2e_check.py
 python tools/edge_check.py
 python tools/standalone_check.py
 ```
-
-包结构也已校验：ipk 的 ar 三件套 + control 元数据正确；apk 的 `.PKGINFO`（`arch=noarch`、`pkgver=0.1.0-r1`、datahash、依赖）与 control/data 段文件权限均正确。
-
-> 限制：本机无 OpenWrt 工具链与 ucode，未做真机交叉编译与 ubus 实跑；引擎的 `jsonfilter` 字段表达式需按真机上的 CLI 版本核对（见「真机调试」）。

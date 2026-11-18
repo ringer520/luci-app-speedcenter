@@ -8,8 +8,10 @@
 
   function createApp(host, adapter) {
     /* ---------------------------------------------------------------- state */
+    var initUnit = 'mbps';
+    try { if (root.localStorage && root.localStorage.getItem('sc-unit') === 'mbs') initUnit = 'mbs'; } catch (e) {}
     var S = {
-      tab: 'overview', region: 'cn', theme: 'auto', config: {},
+      tab: 'overview', region: 'cn', cnNode: 'auto', unit: initUnit, theme: 'auto', config: {},
       status: { running: false, progress: 0, phase: '', live: {}, lastResult: null },
       ping: { cn: [], global: [] }, probing: false,
       history: [], historyRange: 'all', lastHist: { cn: null, global: null }, lastEpoch: 0,
@@ -39,20 +41,35 @@
     var A = {
       setRegion: function (r) {
         if (S.status.running) return;
-        S.region = r;
-        S.config.region = r;
-        adapter.saveConfig(Object.assign({}, S.config, { theme: S.theme })).catch(function () {});
+        S.region = r === 'global' ? 'global' : 'cn';
+        S.config.region = S.region;
+        adapter.saveConfig(Object.assign({}, S.config, { theme: S.theme, cnNode: S.cnNode })).catch(function () {});
+        rerenderView();
+      },
+
+      setCnNode: function (n) {
+        if (S.status.running) return;
+        S.cnNode = n || 'auto';
+        S.config.cnNode = S.cnNode;
+        adapter.saveConfig(Object.assign({}, S.config, { theme: S.theme, region: S.region, cnNode: S.cnNode })).catch(function () {});
+        rerenderView();
+      },
+
+      setUnit: function (u) {
+        S.unit = u === 'mbs' ? 'mbs' : 'mbps';
+        try { if (root.localStorage) root.localStorage.setItem('sc-unit', S.unit); } catch (e) {}
+        renderUnitToggle();
         rerenderView();
       },
 
       startSpeed: function () {
         if (S.status.running) return;
-        var regions = S.region === 'both' ? ['cn', 'global'] : [S.region];
-        regions.forEach(function (k) { S.series[k] = { dl: [], ul: [] }; });
+        var region = S.region === 'global' ? 'global' : 'cn';
+        S.series[region] = { dl: [], ul: [] };
         var prev = S.status.lastResult;
-        S.status = { running: true, progress: 4, phase: (S.region === 'global' ? '国际节点' : '国内节点') + ' · 延迟探测', live: {}, lastResult: prev };
+        S.status = { running: true, progress: 4, phase: (region === 'global' ? '国际节点' : '国内节点') + ' · 延迟探测', live: {}, lastResult: prev };
         rerenderView();
-        adapter.startSpeed({ region: S.region, engine: S.config.engine || 'ookla', serverSource: S.config.serverSource || 'auto' })
+        adapter.startSpeed({ region: region, engine: S.config.engine || 'ookla', serverSource: S.config.serverSource || 'auto', cnNode: S.cnNode || 'auto' })
           .then(function () { schedulePoll(300); })
           .catch(function (e) {
             S.status.running = false;
@@ -88,7 +105,7 @@
       },
 
       saveConfig: function (patch) {
-        S.config = Object.assign({}, S.config, patch, { region: S.region, theme: S.theme });
+        S.config = Object.assign({}, S.config, patch, { region: S.region, cnNode: S.cnNode, theme: S.theme });
         return adapter.saveConfig(S.config);
       }
     };
@@ -98,7 +115,7 @@
     function schedulePoll(delay) {
       clearTimeout(pollTimer);
       if (document.hidden) return;
-      pollTimer = setTimeout(poll, delay != null ? delay : S.status.running ? 800 : 3000);
+      pollTimer = setTimeout(poll, delay != null ? delay : S.status.running ? 500 : 3000);
     }
 
     function poll() {
@@ -113,24 +130,52 @@
     document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); else clearTimeout(pollTimer); });
 
     /* ---------------------------------------------------------------- shell */
-    var themeBtn = h('button', { class: 'sc-icon-btn', title: '主题：自动 / 浅色 / 深色', text: 'A', onclick: function () {
+    function themeSvg(mode) {
+      var s = U.svg('svg', { viewBox: '0 0 20 20', width: 16, height: 16 });
+      if (mode === 'dark') {
+        s.appendChild(U.svg('path', { d: 'M15.8 12.6A6.5 6.5 0 0 1 7.4 4.2a6.5 6.5 0 1 0 8.4 8.4z', fill: 'currentColor' }));
+      } else if (mode === 'light') {
+        s.appendChild(U.svg('circle', { cx: 10, cy: 10, r: 4, fill: 'currentColor' }));
+        s.appendChild(U.svg('path', { d: 'M10 2v2m0 12v2M2 10h2m12 0h2m-2.3-5.7-1.4 1.4M5.7 14.3l-1.4 1.4m0-11.4 1.4 1.4m8.6 8.6 1.4 1.4', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linecap': 'round' }));
+      } else {
+        s.appendChild(U.svg('circle', { cx: 10, cy: 10, r: 6.5, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8 }));
+        s.appendChild(U.svg('path', { d: 'M10 3.5a6.5 6.5 0 0 1 0 13z', fill: 'currentColor' }));
+      }
+      return s;
+    }
+
+    var themeBtn = h('button', { class: 'sc-icon-btn', title: '主题：自动 / 浅色 / 深色', onclick: function () {
       S.theme = S.theme === 'light' ? 'dark' : S.theme === 'dark' ? 'auto' : 'light';
       applyTheme();
-      adapter.saveConfig(Object.assign({}, S.config, { theme: S.theme, region: S.region })).catch(function () {});
+      adapter.saveConfig(Object.assign({}, S.config, { theme: S.theme, region: S.region, cnNode: S.cnNode })).catch(function () {});
     } });
-    var pill = h('div', { class: 'sc-pill ok' }, [h('i', { class: 'dot' }), h('span', { text: '空闲' })]);
+    var unitBtn = h('button', { class: 'sc-unit-btn', id: 'sc-unit-toggle', title: '切换网速单位 (Mbps / MB/s)', onclick: function () {
+      A.setUnit(S.unit === 'mbps' ? 'mbs' : 'mbps');
+    } });
+    function renderUnitToggle() {
+      unitBtn.innerHTML = '';
+      unitBtn.appendChild(h('span', { class: S.unit === 'mbps' ? 'active' : '', text: 'Mbps' }));
+      unitBtn.appendChild(h('span', { class: S.unit === 'mbs' ? 'active' : '', text: 'MB/s' }));
+    }
+    renderUnitToggle();
+
+    var pill = h('div', { class: 'sc-pill' }, [h('i', { class: 'dot' }), h('span', { text: '' })]);
     var tabsBox = h('nav', { class: 'sc-tabs', role: 'tablist' });
     var main = h('div', { class: 'sc-content' });
 
     function applyTheme() {
       if (S.theme === 'auto') host.removeAttribute('data-theme'); else host.setAttribute('data-theme', S.theme);
-      themeBtn.textContent = S.theme === 'dark' ? 'D' : S.theme === 'light' ? 'L' : 'A';
+      themeBtn.innerHTML = '';
+      themeBtn.appendChild(themeSvg(S.theme));
+      themeBtn.title = '当前主题：' + (S.theme === 'dark' ? '深色' : S.theme === 'light' ? '浅色' : '跟随系统') + '（点击切换）';
     }
 
     function updatePill() {
       var st = S.status, err = st.last_error && st.last_error !== 'stopped' ? st.last_error : '';
-      pill.className = 'sc-pill' + (st.running ? ' running' : err ? ' bad' : ' ok');
-      pill.lastChild.textContent = st.running ? '测速中 ' + Math.round(st.progress || 0) + '%' : err ? '异常：' + err : '空闲';
+      if (!st.running && !err) { pill.style.display = 'none'; return; }
+      pill.style.display = '';
+      pill.className = 'sc-pill' + (st.running ? ' running' : ' bad');
+      pill.lastChild.textContent = st.running ? '测速中 ' + Math.round(st.progress || 0) + '%' : '异常：' + err;
     }
 
     function renderTabs() {
@@ -155,14 +200,20 @@
 
     host.classList.add('sc-app');
     if (host.id !== 'speedcenter-app') host.classList.add('sc-app--standalone');
+    if (document.head && !document.querySelector('link[data-sc-icon]')) {
+      var fav = document.createElement('link');
+      fav.rel = 'icon'; fav.type = 'image/svg+xml'; fav.setAttribute('data-sc-icon', '1');
+      fav.href = 'data:image/svg+xml,' + encodeURIComponent(new XMLSerializer().serializeToString(U.brandIcon(64)));
+      document.head.appendChild(fav);
+    }
     host.innerHTML = '';
     host.appendChild(h('div', { class: 'sc-header' }, [h('div', { class: 'sc-header-inner' }, [
       h('div', { class: 'sc-brand-group' }, [
-        h('div', { class: 'sc-logo', text: 'SC' }),
-        h('div', { class: 'sc-brand' }, [h('h1', { text: 'SpeedCenter' }), h('p', { text: '国内外双线测速 · 全球延迟观测' })])
+        h('div', { class: 'sc-logo' }, [U.brandIcon(38)]),
+        h('div', { class: 'sc-brand' }, [h('h1', { text: 'SpeedCenter' }), h('p', { text: '分线带宽测速 · 全球延迟观测' })])
       ]),
       tabsBox,
-      h('div', { class: 'sc-header-right' }, [pill, themeBtn])
+      h('div', { class: 'sc-header-right' }, [pill, unitBtn, themeBtn])
     ])]));
     host.appendChild(h('div', { class: 'sc-wrap' }, [main]));
 
@@ -175,7 +226,8 @@
     ]).then(function (d) {
       S.config = d[0] || {};
       S.theme = S.config.theme || 'auto';
-      S.region = S.config.region === 'global' || S.config.region === 'both' ? S.config.region : 'cn';
+      S.region = S.config.region === 'global' ? 'global' : 'cn';
+      S.cnNode = S.config.cnNode || 'auto';
       setHistory(d[1]);
       S.ping = d[2] || S.ping;
       S.status = d[3] || S.status;

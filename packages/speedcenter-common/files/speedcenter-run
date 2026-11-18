@@ -5,16 +5,19 @@
 . /usr/share/libubox/jshn.sh
 
 STATE_DIR=/tmp/speedcenter
+HISTORY_DIR=/etc/speedcenter
 STATE="$STATE_DIR/state.json"
 RESULT="$STATE_DIR/result.json"
 PING="$STATE_DIR/ping.json"
-HISTORY="$STATE_DIR/history.jsonl"
+HISTORY="$HISTORY_DIR/history.jsonl"
+LEGACY_HISTORY="$STATE_DIR/history.jsonl"
 STOP="$STATE_DIR/stop"
 PIDFILE="$STATE_DIR/pid"
 
 ENGINE=ookla
 REGION=cn
 SOURCE=auto
+CN_NODE=auto
 ACTION=start
 MODE=icmp
 
@@ -96,13 +99,66 @@ run_cn_direct_backbone() {
 	local cn_prev="$1" global_prev="$2"
 	local wan_if
 	wan_if=$(get_wan_if)
-	local srv_name="国内骨干直连 (腾讯·清华千兆节点)"
+	local srv_name ping_host dl_u1 dl_u2 dl_u3 dl_u4 ul_u1 ul_u2 ul_u3 ul_u4
+	case "$CN_NODE" in
+		tencent)
+			srv_name="腾讯云骨干节点 (广州/上海 BGP)"
+			ping_host="mirrors.cloud.tencent.com"
+			dl_u1="https://mirrors.cloud.tencent.com/ubuntu/ls-lR.gz?s=1"
+			dl_u2="https://mirrors.cloud.tencent.com/ubuntu/ls-lR.gz?s=2"
+			dl_u3="https://mirrors.cloud.tencent.com/ubuntu/ls-lR.gz?s=3"
+			dl_u4="https://mirrors.cloud.tencent.com/ubuntu/ls-lR.gz?s=4"
+			ul_u1="https://mirrors.cloud.tencent.com/"
+			ul_u2="https://www.qq.com/"
+			ul_u3="https://mirrors.cloud.tencent.com/"
+			ul_u4="https://www.qq.com/"
+			;;
+		tsinghua)
+			srv_name="清华大学 TUNA 节点 (北京千兆骨干)"
+			ping_host="mirrors.tuna.tsinghua.edu.cn"
+			dl_u1="https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ls-lR.gz?s=1"
+			dl_u2="https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ls-lR.gz?s=2"
+			dl_u3="https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ls-lR.gz?s=3"
+			dl_u4="https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ls-lR.gz?s=4"
+			ul_u1="https://mirrors.tuna.tsinghua.edu.cn/"
+			ul_u2="https://www.baidu.com/"
+			ul_u3="https://mirrors.tuna.tsinghua.edu.cn/"
+			ul_u4="https://www.bilibili.com/"
+			;;
+		aliyun)
+			srv_name="阿里云骨干节点 (华东/全国多线)"
+			ping_host="mirrors.aliyun.com"
+			dl_u1="https://mirrors.aliyun.com/ubuntu/ls-lR.gz?s=1"
+			dl_u2="https://mirrors.aliyun.com/ubuntu/ls-lR.gz?s=2"
+			dl_u3="https://mirrors.aliyun.com/ubuntu/ls-lR.gz?s=3"
+			dl_u4="https://mirrors.aliyun.com/ubuntu/ls-lR.gz?s=4"
+			ul_u1="https://mirrors.aliyun.com/"
+			ul_u2="https://www.aliyun.com/"
+			ul_u3="https://www.taobao.com/"
+			ul_u4="https://mirrors.aliyun.com/"
+			;;
+		*)
+			srv_name="国内骨干直连 (腾讯·清华·阿里自动)"
+			ping_host="mirrors.cloud.tencent.com"
+			dl_u1="https://mirrors.cloud.tencent.com/ubuntu/ls-lR.gz?s=1"
+			dl_u2="https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ls-lR.gz?s=2"
+			dl_u3="https://mirrors.cloud.tencent.com/ubuntu/ls-lR.gz?s=3"
+			dl_u4="https://mirrors.aliyun.com/ubuntu/ls-lR.gz?s=4"
+			ul_u1="https://mirrors.cloud.tencent.com/"
+			ul_u2="https://www.baidu.com/"
+			ul_u3="https://www.qq.com/"
+			ul_u4="https://www.bilibili.com/"
+			;;
+	esac
 
-	# 1. Domestic Direct Ping & Jitter Probe
-	write_state 1 12 "国内节点 · 延迟探测" "" "{\"download\":0,\"upload\":0,\"ping\":0,\"jitter\":0,\"loss\":0,\"server\":\"$srv_name\"}" "$global_prev"
+	# 1. Domestic Direct Ping & Jitter Probe + Connected IP Detection
+	local srv_ip
+	srv_ip=$(curl -4 -I -s -o /dev/null -w "%{remote_ip}" --connect-timeout 2 --max-time 2 "$dl_u1" 2>/dev/null)
+	write_state 1 12 "国内节点 · 延迟探测" "" "{\"download\":0,\"upload\":0,\"ping\":0,\"jitter\":0,\"loss\":0,\"server\":\"$srv_name\",\"ip\":\"$srv_ip\"}" "$global_prev"
 	local raw_ping ping_avg ping_min ping_max jitter_val loss_val
-	raw_ping=$(ping -4 -c 4 -W 1 mirrors.cloud.tencent.com 2>/dev/null)
+	raw_ping=$(ping -4 -c 4 -W 1 "$ping_host" 2>/dev/null)
 	[ -z "$raw_ping" ] && raw_ping=$(ping -c 4 -W 1 www.baidu.com 2>/dev/null)
+	[ -z "$srv_ip" ] && srv_ip=$(echo "$raw_ping" | sed -n 's/.*(\([0-9.]*\)).*/\1/p' | head -n 1)
 	ping_avg=$(echo "$raw_ping" | sed -n 's/.*min\/avg\/max[^=]*= *\([0-9.]*\)\/\([0-9.]*\)\/\([0-9.]*\).*/\2/p' | awk '{printf "%.1f", ($1+0); exit}')
 	ping_min=$(echo "$raw_ping" | sed -n 's/.*min\/avg\/max[^=]*= *\([0-9.]*\)\/\([0-9.]*\)\/\([0-9.]*\).*/\1/p' | awk '{printf "%.1f", ($1+0); exit}')
 	ping_max=$(echo "$raw_ping" | sed -n 's/.*min\/avg\/max[^=]*= *\([0-9.]*\)\/\([0-9.]*\)\/\([0-9.]*\).*/\3/p' | awk '{printf "%.1f", ($1+0); exit}')
@@ -113,22 +169,30 @@ run_cn_direct_backbone() {
 
 	stop_requested && return 130
 
-	# 2. Multi-Stream Direct Download Test (4 concurrent streams, ~5s)
+	# 2. Multi-Stream Direct Download Test (4 concurrent streams sustained for 8s)
 	local dl_dir="$STATE_DIR/cn_dl.$$"
 	mkdir -p "$dl_dir"
-	local rx0=0 rx1=0 max_dl=0 tick=0
+	local dl_end=$(( $(now) + 8 ))
+	local rx0=0 rx1=0 ema_dl=0 max_dl=0 tick=0 steady_rx0=0 steady_t0=0
 	[ -n "$wan_if" ] && [ -f "/sys/class/net/$wan_if/statistics/rx_bytes" ] && rx0=$(cat "/sys/class/net/$wan_if/statistics/rx_bytes" 2>/dev/null || echo 0)
 
-	curl -4 -s -o /dev/null -w "%{speed_download}\n" --connect-timeout 2 --max-time 5 "https://mirrors.cloud.tencent.com/ubuntu/ls-lR.gz?s=1" > "$dl_dir/1" 2>/dev/null &
-	local p1=$!
-	curl -4 -s -o /dev/null -w "%{speed_download}\n" --connect-timeout 2 --max-time 5 "https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ls-lR.gz?s=2" > "$dl_dir/2" 2>/dev/null &
-	local p2=$!
-	curl -4 -s -o /dev/null -w "%{speed_download}\n" --connect-timeout 2 --max-time 5 "https://mirrors.cloud.tencent.com/ubuntu/ls-lR.gz?s=3" > "$dl_dir/3" 2>/dev/null &
-	local p3=$!
-	curl -4 -s -o /dev/null -w "%{speed_download}\n" --connect-timeout 2 --max-time 5 "https://mirrors.aliyun.com/ubuntu/ls-lR.gz?s=4" > "$dl_dir/4" 2>/dev/null &
-	local p4=$!
+	cn_dl_worker() {
+		local url="$1" out="$2" end_ts="$3" total=0 spd rem
+		while ! stop_requested; do
+			rem=$((end_ts - $(now)))
+			[ "$rem" -le 0 ] && break
+			spd=$(curl -4 -s -o /dev/null -w "%{size_download}\n" --connect-timeout 2 --max-time "$rem" "$url" 2>/dev/null)
+			total=$((total + ${spd%.*}))
+		done
+		printf '%s\n' "$total" > "$out"
+	}
 
-	while kill -0 "$p1" 2>/dev/null || kill -0 "$p2" 2>/dev/null || kill -0 "$p3" 2>/dev/null; do
+	cn_dl_worker "$dl_u1" "$dl_dir/1" "$dl_end" & local p1=$!
+	cn_dl_worker "$dl_u2" "$dl_dir/2" "$dl_end" & local p2=$!
+	cn_dl_worker "$dl_u3" "$dl_dir/3" "$dl_end" & local p3=$!
+	cn_dl_worker "$dl_u4" "$dl_dir/4" "$dl_end" & local p4=$!
+
+	while kill -0 "$p1" 2>/dev/null || kill -0 "$p2" 2>/dev/null || kill -0 "$p3" 2>/dev/null || kill -0 "$p4" 2>/dev/null; do
 		if stop_requested; then
 			kill -TERM "$p1" "$p2" "$p3" "$p4" 2>/dev/null
 			rm -rf "$dl_dir"
@@ -139,21 +203,31 @@ run_cn_direct_backbone() {
 		local dl_now=0
 		if [ -n "$wan_if" ] && [ -f "/sys/class/net/$wan_if/statistics/rx_bytes" ]; then
 			rx1=$(cat "/sys/class/net/$wan_if/statistics/rx_bytes" 2>/dev/null || echo 0)
+			if [ "$tick" -eq 1 ]; then
+				steady_rx0=$rx1; steady_t0=$(now)
+			fi
 			dl_now=$(awk "BEGIN{d=($rx1-$rx0)*8/1000000; printf \"%.1f\", (d>0?d:0)}")
 			rx0=$rx1
-			max_dl=$(awk "BEGIN{printf \"%.1f\", ($dl_now>$max_dl?$dl_now:$max_dl)}")
+			ema_dl=$(awk "BEGIN{e=($ema_dl<=0)?$dl_now:($ema_dl*0.45+$dl_now*0.55); printf \"%.1f\", e}")
+			max_dl=$(awk "BEGIN{printf \"%.1f\", ($ema_dl>$max_dl?$ema_dl:$max_dl)}")
 		fi
-		local prog=$((20 + tick * 7))
-		[ "$prog" -gt 54 ] && prog=54
-		local show_dl=$(awk "BEGIN{printf \"%.1f\", ($dl_now>10?$dl_now:$max_dl)}")
-		write_state 1 "$prog" "国内节点 · 下载测速" "" "{\"download\":${show_dl:-0},\"upload\":0,\"ping\":$ping_avg,\"jitter\":$jitter_val,\"loss\":$loss_val,\"server\":\"$srv_name\"}" "$global_prev"
+		local prog=$((16 + tick * 4))
+		[ "$prog" -gt 52 ] && prog=52
+		write_state 1 "$prog" "国内节点 · 下载测速" "" "{\"download\":${ema_dl:-0},\"upload\":0,\"ping\":$ping_avg,\"jitter\":$jitter_val,\"loss\":$loss_val,\"server\":\"$srv_name\",\"ip\":\"$srv_ip\"}" "$global_prev"
+		[ "$(now)" -ge "$dl_end" ] && [ "$tick" -ge 8 ] && break
 	done
+	kill -TERM "$p1" "$p2" "$p3" "$p4" 2>/dev/null
 	wait "$p1" "$p2" "$p3" "$p4" 2>/dev/null
 
-	local curl_dl=0
-	curl_dl=$(cat "$dl_dir"/* 2>/dev/null | awk '{s+=$1} END{printf "%.1f", s*8/1000000}')
+	local steady_dl=0 curl_dl=0
+	if [ -n "$wan_if" ] && [ "$steady_rx0" -gt 0 ] && [ -f "/sys/class/net/$wan_if/statistics/rx_bytes" ]; then
+		local rx_end=$(cat "/sys/class/net/$wan_if/statistics/rx_bytes" 2>/dev/null || echo 0)
+		local dt=$(( $(now) - steady_t0 ))
+		[ "$dt" -ge 2 ] && steady_dl=$(awk "BEGIN{printf \"%.1f\", ($rx_end-$steady_rx0)*8/($dt*1000000)}")
+	fi
+	curl_dl=$(cat "$dl_dir"/* 2>/dev/null | awk '{s+=$1} END{printf "%.1f", (s*8)/(8*1000000)}')
 	rm -rf "$dl_dir"
-	RES_DL=$(awk "BEGIN{printf \"%.1f\", ($curl_dl>$max_dl?$curl_dl:$max_dl)}")
+	RES_DL=$(awk "BEGIN{v=($steady_dl>$curl_dl?$steady_dl:$curl_dl); printf \"%.1f\", (v>$max_dl?v:$max_dl)}")
 	if awk "BEGIN{exit !(($RES_DL+0) <= 0)}"; then
 		echo "国内测速节点连接失败" >&2
 		return 1
@@ -161,23 +235,31 @@ run_cn_direct_backbone() {
 
 	stop_requested && return 130
 
-	# 3. Multi-Stream Direct Upload Test (4 concurrent streams, ~4s)
+	# 3. Multi-Stream Direct Upload Test (4 concurrent streams sustained for 7s)
 	local ul_dir="$STATE_DIR/cn_ul.$$"
 	mkdir -p "$ul_dir"
 	local ul_buf="$ul_dir/buf.bin"
 	dd if=/dev/zero bs=1024k count=4 2>/dev/null > "$ul_buf"
 
-	local tx0=0 tx1=0 max_ul=0 utick=0
+	local ul_end=$(( $(now) + 7 ))
+	local tx0=0 tx1=0 ema_ul=0 max_ul=0 utick=0 steady_tx0=0 steady_ut0=0
 	[ -n "$wan_if" ] && [ -f "/sys/class/net/$wan_if/statistics/tx_bytes" ] && tx0=$(cat "/sys/class/net/$wan_if/statistics/tx_bytes" 2>/dev/null || echo 0)
 
-	curl -4 -s -o /dev/null -w "%{speed_upload}\n" --connect-timeout 2 --max-time 4 -X POST -H "Expect:" --data-binary @"$ul_buf" "https://mirrors.cloud.tencent.com/" > "$ul_dir/1" 2>/dev/null &
-	local u1=$!
-	curl -4 -s -o /dev/null -w "%{speed_upload}\n" --connect-timeout 2 --max-time 4 -X POST -H "Expect:" --data-binary @"$ul_buf" "https://www.baidu.com/" > "$ul_dir/2" 2>/dev/null &
-	local u2=$!
-	curl -4 -s -o /dev/null -w "%{speed_upload}\n" --connect-timeout 2 --max-time 4 -X POST -H "Expect:" --data-binary @"$ul_buf" "https://www.qq.com/" > "$ul_dir/3" 2>/dev/null &
-	local u3=$!
-	curl -4 -s -o /dev/null -w "%{speed_upload}\n" --connect-timeout 2 --max-time 4 -X POST -H "Expect:" --data-binary @"$ul_buf" "https://www.bilibili.com/" > "$ul_dir/4" 2>/dev/null &
-	local u4=$!
+	cn_ul_worker() {
+		local url="$1" buf="$2" out="$3" end_ts="$4" total=0 spd rem
+		while ! stop_requested; do
+			rem=$((end_ts - $(now)))
+			[ "$rem" -le 0 ] && break
+			spd=$(curl -4 -s -o /dev/null -w "%{size_upload}\n" --connect-timeout 2 --max-time "$rem" -X POST -H "Expect:" --data-binary @"$buf" "$url" 2>/dev/null)
+			total=$((total + ${spd%.*}))
+		done
+		printf '%s\n' "$total" > "$out"
+	}
+
+	cn_ul_worker "$ul_u1" "$ul_buf" "$ul_dir/1" "$ul_end" & local u1=$!
+	cn_ul_worker "$ul_u2" "$ul_buf" "$ul_dir/2" "$ul_end" & local u2=$!
+	cn_ul_worker "$ul_u3" "$ul_buf" "$ul_dir/3" "$ul_end" & local u3=$!
+	cn_ul_worker "$ul_u4" "$ul_buf" "$ul_dir/4" "$ul_end" & local u4=$!
 
 	while kill -0 "$u1" 2>/dev/null || kill -0 "$u2" 2>/dev/null || kill -0 "$u3" 2>/dev/null || kill -0 "$u4" 2>/dev/null; do
 		if stop_requested; then
@@ -190,25 +272,36 @@ run_cn_direct_backbone() {
 		local ul_now=0
 		if [ -n "$wan_if" ] && [ -f "/sys/class/net/$wan_if/statistics/tx_bytes" ]; then
 			tx1=$(cat "/sys/class/net/$wan_if/statistics/tx_bytes" 2>/dev/null || echo 0)
+			if [ "$utick" -eq 1 ]; then
+				steady_tx0=$tx1; steady_ut0=$(now)
+			fi
 			ul_now=$(awk "BEGIN{u=($tx1-$tx0)*8/1000000; printf \"%.1f\", (u>0?u:0)}")
 			tx0=$tx1
-			max_ul=$(awk "BEGIN{printf \"%.1f\", ($ul_now>$max_ul?$ul_now:$max_ul)}")
+			ema_ul=$(awk "BEGIN{e=($ema_ul<=0)?$ul_now:($ema_ul*0.45+$ul_now*0.55); printf \"%.1f\", e}")
+			max_ul=$(awk "BEGIN{printf \"%.1f\", ($ema_ul>$max_ul?$ema_ul:$max_ul)}")
 		fi
-		local uprog=$((58 + utick * 9))
-		[ "$uprog" -gt 94 ] && uprog=94
-		local show_ul=$(awk "BEGIN{printf \"%.1f\", ($ul_now>5?$ul_now:$max_ul)}")
-		write_state 1 "$uprog" "国内节点 · 上传测速" "" "{\"download\":$RES_DL,\"upload\":${show_ul:-0},\"ping\":$ping_avg,\"jitter\":$jitter_val,\"loss\":$loss_val,\"server\":\"$srv_name\"}" "$global_prev"
+		local uprog=$((56 + utick * 5))
+		[ "$uprog" -gt 95 ] && uprog=95
+		write_state 1 "$uprog" "国内节点 · 上传测速" "" "{\"download\":$RES_DL,\"upload\":${ema_ul:-0},\"ping\":$ping_avg,\"jitter\":$jitter_val,\"loss\":$loss_val,\"server\":\"$srv_name\",\"ip\":\"$srv_ip\"}" "$global_prev"
+		[ "$(now)" -ge "$ul_end" ] && [ "$utick" -ge 7 ] && break
 	done
+	kill -TERM "$u1" "$u2" "$u3" "$u4" 2>/dev/null
 	wait "$u1" "$u2" "$u3" "$u4" 2>/dev/null
 
-	local curl_ul=0
-	curl_ul=$(cat "$ul_dir"/1 "$ul_dir"/2 "$ul_dir"/3 "$ul_dir"/4 2>/dev/null | awk '{s+=$1} END{printf "%.1f", s*8/1000000}')
+	local steady_ul=0 curl_ul=0
+	if [ -n "$wan_if" ] && [ "$steady_tx0" -gt 0 ] && [ -f "/sys/class/net/$wan_if/statistics/tx_bytes" ]; then
+		local tx_end=$(cat "/sys/class/net/$wan_if/statistics/tx_bytes" 2>/dev/null || echo 0)
+		local udt=$(( $(now) - steady_ut0 ))
+		[ "$udt" -ge 2 ] && steady_ul=$(awk "BEGIN{printf \"%.1f\", ($tx_end-$steady_tx0)*8/($udt*1000000)}")
+	fi
+	curl_ul=$(cat "$ul_dir"/1 "$ul_dir"/2 "$ul_dir"/3 "$ul_dir"/4 2>/dev/null | awk '{s+=$1} END{printf "%.1f", (s*8)/(7*1000000)}')
 	rm -rf "$ul_dir"
-	RES_UL=$(awk "BEGIN{printf \"%.1f\", ($curl_ul>$max_ul?$curl_ul:$max_ul)}")
+	RES_UL=$(awk "BEGIN{v=($steady_ul>$curl_ul?$steady_ul:$curl_ul); printf \"%.1f\", (v>$max_ul?v:$max_ul)}")
 	RES_PING="$ping_avg"
 	RES_JITTER="$jitter_val"
 	RES_LOSS="$loss_val"
 	RES_SERVER="$srv_name"
+	RES_IP="$srv_ip"
 	return 0
 }
 
@@ -218,6 +311,11 @@ run_with_live_sample() {
 	shift 4
 	local tmp_out="$STATE_DIR/cli_out.$$"
 	rm -f "$tmp_out"
+	local live_ip=""
+	if [ "$region" = global ]; then
+		live_ip=$(curl -4 -s --connect-timeout 2 --max-time 2 "https://api.ip.sb/ip" 2>/dev/null | tr -d '[:space:]')
+		[ -z "$live_ip" ] && live_ip=$(curl -4 -s -o /dev/null -w "%{remote_ip}" --connect-timeout 2 --max-time 2 "https://www.speedtest.net/" 2>/dev/null)
+	fi
 	( "$@" > "$tmp_out" 2>/dev/null ) &
 	local cpid=$!
 	local wan_if
@@ -264,7 +362,7 @@ run_with_live_sample() {
 			show_dl="$max_dl"
 			show_ul=$(awk "BEGIN{printf \"%.1f\", ($ul_now>0?$ul_now:$max_ul)}")
 		fi
-		live_pkt="{\"download\":${show_dl:-0},\"upload\":${show_ul:-0},\"ping\":0,\"jitter\":0,\"loss\":0,\"server\":\"正在测速 (${label})\"}"
+		live_pkt="{\"download\":${show_dl:-0},\"upload\":${show_ul:-0},\"ping\":0,\"jitter\":0,\"loss\":0,\"server\":\"正在测速 (${label})\",\"ip\":\"$live_ip\"}"
 		if [ "$region" = cn ]; then
 			write_state 1 "$prog" "$phase_txt" "" "$live_pkt" "$global_prev"
 		else
@@ -281,19 +379,25 @@ run_with_live_sample() {
 
 parse_speedtest_go() {
 	local out="$1"
-	local dl_bps ul_bps lat_ns jit_ns name sponsor
+	local dl_bps ul_bps lat_ns jit_ns name sponsor host srv_ip user_ip
 	dl_bps=$(jf "$out" '@.servers[0].dl_speed')
 	ul_bps=$(jf "$out" '@.servers[0].ul_speed')
 	lat_ns=$(jf "$out" '@.servers[0].latency')
 	jit_ns=$(jf "$out" '@.servers[0].jitter')
 	sponsor=$(jf "$out" '@.servers[0].sponsor')
 	name=$(jf "$out" '@.servers[0].name')
+	host=$(jf "$out" '@.servers[0].host')
+	user_ip=$(jf "$out" '@.user.ip')
 	[ -z "$dl_bps" ] && return 1
 	RES_DL=$(to_mbps "$dl_bps")
 	RES_UL=$(to_mbps "$ul_bps")
 	RES_PING=$(ns_to_ms "$lat_ns")
 	RES_JITTER=$(ns_to_ms "$jit_ns")
 	RES_LOSS=0
+	host=${host%%:*}
+	[ -n "$host" ] && srv_ip=$(ping -4 -c 1 -W 1 "$host" 2>/dev/null | sed -n 's/.*(\([0-9.]*\)).*/\1/p' | head -n 1)
+	RES_IP="${srv_ip:-$user_ip}"
+	[ -n "$user_ip" ] && RES_EXIT_IP="$user_ip"
 	if [ -n "$sponsor" ] && [ -n "$name" ]; then
 		RES_SERVER="$sponsor - $name"
 	else
@@ -359,7 +463,7 @@ run_engine_once() {
 	local engine="$1" region="$2" cn_prev="$3" global_prev="$4"
 	local label="国内节点"
 	[ "$region" = global ] && label="国际节点"
-	RES_DL=0; RES_UL=0; RES_PING=0; RES_JITTER=0; RES_LOSS=0; RES_SERVER="auto"
+	RES_DL=0; RES_UL=0; RES_PING=0; RES_JITTER=0; RES_LOSS=0; RES_SERVER="auto"; RES_IP=""; RES_EXIT_IP=""
 
 	# Domestic region ('cn'): Always bypass transparent proxy and test against
 	# mainland China gigabit backbone nodes unless user provided a custom non-empty cn_server_list for librespeed.
@@ -378,6 +482,7 @@ run_engine_once() {
 			json_add_double jitter "${RES_JITTER:-0}"
 			json_add_double loss "${RES_LOSS:-0}"
 			json_add_string server "${RES_SERVER:-国内骨干直连}"
+			[ -n "$RES_IP" ] && json_add_string ip "$RES_IP"
 			json_dump
 			return 0
 		fi
@@ -441,29 +546,35 @@ run_engine_once() {
 	json_add_double jitter "${RES_JITTER:-0}"
 	json_add_double loss "${RES_LOSS:-0}"
 	json_add_string server "${RES_SERVER:-auto}"
+	[ -n "$RES_IP" ] && json_add_string ip "$RES_IP"
+	[ -n "$RES_EXIT_IP" ] && json_add_string exit_ip "$RES_EXIT_IP"
 	json_dump
 }
 
 append_history() {
 	local region="$1" data="$2"
-	local dl ul ping jitter loss server
+	local dl ul ping jitter loss server ip
 	dl=$(jf "$data" '@.download')
 	ul=$(jf "$data" '@.upload')
 	ping=$(jf "$data" '@.ping')
 	jitter=$(jf "$data" '@.jitter')
 	loss=$(jf "$data" '@.loss')
 	server=$(jf "$data" '@.server')
+	ip=$(jf "$data" '@.ip')
 	json_init
 	json_add_int epoch "$(now)"
 	json_add_string time "$(date '+%F %T')"
 	json_add_string region "$region"
 	json_add_string engine "$ENGINE"
 	json_add_string server "$server"
+	[ -n "$ip" ] && json_add_string ip "$ip"
 	json_add_double download "${dl:-0}"
 	json_add_double upload "${ul:-0}"
 	json_add_double ping "${ping:-0}"
 	json_add_double jitter "${jitter:-0}"
 	json_add_double loss "${loss:-0}"
+	mkdir -p "$HISTORY_DIR"
+	[ ! -f "$HISTORY" ] && [ -f "$LEGACY_HISTORY" ] && cp "$LEGACY_HISTORY" "$HISTORY" 2>/dev/null
 	printf '%s\n' "$(json_dump)" >> "$HISTORY"
 	local keep=$(( $(cfg retention 2>/dev/null || echo 30) * 288 ))
 	[ "$keep" -lt 200 ] && keep=200
@@ -660,6 +771,7 @@ do_ping() {
 CLI_ENGINE=""
 CLI_REGION=""
 CLI_SOURCE=""
+CLI_CN_NODE=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--start) ACTION=start; shift ;;
@@ -667,6 +779,7 @@ while [ $# -gt 0 ]; do
 		--engine) CLI_ENGINE="$2"; shift 2 ;;
 		--region) CLI_REGION="$2"; shift 2 ;;
 		--server-source) CLI_SOURCE="$2"; shift 2 ;;
+		--cn-node) CLI_CN_NODE="$2"; shift 2 ;;
 		*) shift ;;
 	esac
 done
@@ -674,8 +787,10 @@ done
 [ -n "$CLI_ENGINE" ] && ENGINE="$CLI_ENGINE" || ENGINE="$(cfg engine 2>/dev/null || echo ookla)"
 [ -n "$CLI_REGION" ] && REGION="$CLI_REGION" || REGION="$(cfg region 2>/dev/null || echo cn)"
 [ -n "$CLI_SOURCE" ] && SOURCE="$CLI_SOURCE" || SOURCE="$(cfg server_source 2>/dev/null || echo auto)"
+[ -n "$CLI_CN_NODE" ] && CN_NODE="$CLI_CN_NODE" || CN_NODE="$(cfg cn_node 2>/dev/null || echo auto)"
 [ -z "$ENGINE" ] && ENGINE=ookla
 [ -z "$REGION" ] && REGION=cn
 [ -z "$SOURCE" ] && SOURCE=auto
+[ -z "$CN_NODE" ] && CN_NODE=auto
 
 [ "$ACTION" = ping ] && do_ping || do_speed

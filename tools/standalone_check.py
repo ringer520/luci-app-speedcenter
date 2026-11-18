@@ -26,12 +26,12 @@ with sync_playwright() as p:
     page.fill("#user", "root")
     page.fill("#pass", "password")
     page.click("#login-form button[type=submit]")
-    page.wait_for_selector(".sc-app", timeout=8000)
+    page.wait_for_selector(".sc-seg-btn", timeout=8000)
     check("login succeeds and app loads", page.locator(".sc-app").count() == 1)
-    check("config mapped from ubus", page.locator(".sc-seg-btn[data-region='both'].active").count() == 1)
+    check("config mapped from ubus", page.locator(".sc-seg-btn").count() == 2 and page.locator(".sc-seg-btn[data-region='cn'].active").count() == 1)
 
     # speed test via real RPC adapter
-    page.click(".sc-seg-btn[data-region='cn']")
+    page.click(".sc-seg-btn[data-region='global']")
     page.click("#sc-start")
     time.sleep(0.4)
     st = page.evaluate("() => document.querySelector('.sc-pill').textContent")
